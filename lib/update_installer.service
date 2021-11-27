@@ -1,0 +1,11 @@
+[Unit]
+Description=BlueCat Custom Box Prep
+Requires=psmd.service
+Requires=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/root/bin/update_installer.sh
+StandardOutput=journal
+[Install]
+WantedBy=multi-user.target
+

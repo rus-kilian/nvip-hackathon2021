@@ -1,0 +1,23 @@
+#!/bin/bash -e
+
+if [ ! -d env ];then
+	echo "Not found env - bootstrapping one"
+	python3 -m venv env
+	. ./env/bin/activate
+	pip3 install --upgrade pip setuptools pyyaml
+	pip3 install --upgrade pyvmomi pycdlib paramiko scp colorama dnspython python-dateutil netaddr tqdm
+	# FIXME: actually the cpio call subprocess call should be replaced with a libarchive call
+	#pip3 install --upgrade python-libarchive 
+else
+	echo "Activating virtual env"
+	. ./env/bin/activate
+fi
+
+if [ -d iso -a -z "$(ls -1 iso/*.iso 2>/dev/null)" -o ! -f iso/debian-current-netinst.iso ];then
+	echo "Syncing Debian ISO"
+	mkdir -p iso
+	rsync -q ftp.uni-stuttgart.de::debian-cd/current/amd64/iso-cd/debian-1*-netinst.iso iso
+	ln -sf $(cd iso;ls -1 debian-1*-netinst.iso|head -n1) iso/debian-current-netinst.iso
+fi
+
+python3 bin/$(basename $0).py

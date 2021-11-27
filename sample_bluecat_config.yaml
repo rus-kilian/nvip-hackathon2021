@@ -1,0 +1,85 @@
+---
+ignore_cert_error: False
+server: 'vc.your.domain'
+username: 'administrator@vsphere.local'
+password: 'seeeeeecret'
+root_ca: '/etc/ssl/certs/ca-certificates.crt'
+
+# default Bluecat credentials 
+# root: https://care.bluecatnetworks.com/s/question/0D51W00006n4zg0SAA/id-like-to-know-default-root-password
+# admin: https://care.bluecatnetworks.com/s/article/DNS-Integrity-Released-GA-Patches
+root_pw: '$6$ateRikJoQnfo9g9x$aX8/RvBFuCm7c1hFxwXFM8apkatJj2DUi037IveCkiZzLoBuRsvRg32ndTJJc82pbrclMIeqW6La9Ly6c/ZDu1'
+admin_pw: '$6$rVpCgjcxXZUvJCok$D8o8nEY9SdPjav8pvjBqSJh/V/0CuJCacLyRn1AxkkFMny5i79ABumwa71kNRbYNm1m40ZzyR5Jx1Dfry30pl.'
+#ssh_root_pubkey:
+#  - 'ssh-ed25519 AAAA... root@adminhost'
+
+datacenter: 'your-DC'
+datastore: 'your-DS'
+cluster:  'your-cluster'
+folder: '/vm/somewhere'
+network: 'VM Network'
+dvs_network: False
+
+# lab password for https admin login
+bam_password: 'does.not.matter.really'
+
+# servers that you do not want enabled in your lab deployment
+suspend_servers:
+  - 'bdds1.your.domain'
+
+# mapping from prod to lab deployment
+replace_servers:
+  'prod1.bdds.your.domain':
+      'name': 'lab1.bdds.your.domain'
+      'ipv4': '192.0.2.1'
+      'ipv6': '2001:dc8::1:1'
+      'profile': 'ADONIS_XMB3'
+  'non-bdds.prod.your.domain':
+      'name': 'labtest.non-bdds.your.domain'
+      'ipv4': '192.0.2.2'
+      'netmask': 24
+      'gateway': '192.0.2.254'
+      'ipv6': '2001:dc8::1:2'
+      # automatically deploy a new Debian VM to this IP
+      'deploy': 'iso/debian-current-netinst.iso'
+      # FIXME: there should also be a service deployment here
+      # (like add a matching BIND9/NSD/Knot config - and maybe a dnsdist)
+
+# non-BDDS servers to add (BDDSes are automatically added if not listed here)
+add_servers:
+  'non-bdds2.labtest2.your.domain':
+      'copy': 'labtest.non-bdds.your.domain'
+      'ipv4': '192.0.2.3'
+      'netmask': 24
+      'gateway': '192.0.2.254'
+      'ipv6': '2001:dc8::1:3'
+      # automatically deploy a new Debian VM to this IP
+      'deploy': 'iso/debian-current-netinst.iso'
+      # FIXME: there should also be a service deployment here
+      # (like add a matching BIND9/NSD/Knot config - and maybe a dnsdist)
+
+bam:
+  name: 'bam.lab.your.domain'
+  ipaddr: '192.0.2.100'
+  netmask: 24
+  gateway: '192.0.2.254'
+  # FIXME: right now no IPv6 deployment on BAM!
+  ip6addr: '2001:dc8::2:1'
+    #
+  # whatever BCN assigns
+  clientid: '00...'
+  activation_id: '...'
+
+   # X.509 key passphrase (if any)
+  key_passphrase: 'supers3cret'
+bdds:
+  - name: 'lab-bdds1.your.domain'
+    ipaddr: '192.0.2.67'
+    netmask: 24
+    gateway: '192.0.2.254'
+    ip6addr: '2001:dc8::1:67'
+    # whatever BCN assigns
+    clientid: '00...'
+    activation_id: '...'
+    profile: 'ADONIS_XMB3'
+

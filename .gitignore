@@ -1,0 +1,11 @@
+__pycache__
+*/__pycache__
+*/*/__pycache__
+certs/*
+env
+backup
+updates
+patches
+ova
+iso/*.iso
+migration/*.xml
