@@ -43,7 +43,11 @@ from pyVim.connect import SmartConnect, Disconnect
 from tools.filename import clean_filename
 from paramiko import SSHClient, Ed25519Key, RSAKey, Agent, SSHException
 from paramiko.client import AutoAddPolicy
-from paramiko.ssh_exception import ChannelException, NoValidConnectionsError
+from paramiko.ssh_exception import (
+    ChannelException,
+    NoValidConnectionsError,
+    PasswordRequiredException,
+)
 from scp import SCPClient
 from urllib3 import disable_warnings
 from urllib3.exceptions import InsecureRequestWarning
@@ -572,6 +576,7 @@ class VMPreparer:
         greenprint(self.name)
         with VMUpdater(self.ipaddr) as vmu:
             vmu.upload_files(upload)
+            vmu.upload_files(["lib/x509_update.sh"], "/root/bin/")
             stdin, stdout, stderr = vmu.ssh.exec_command(  # nosec: B601
                 # XXX: redirecting stderr here to catch all output in stdout
                 "/root/bin/x509_update.sh /var/lib/bcn_updates/%s.p12 2>&1"
@@ -1230,6 +1235,7 @@ class VMUpdater:
         self.ssh_connect_timeout = 10
         self.ssh_auth_timeout = 3
         self.private = None
+        self.password = None
         self.transport = None
         self.username = "root"
 
@@ -1301,15 +1307,56 @@ class VMUpdater:
                             break  # no need to try other private keys
             else:
                 if not self.private:
-                    _rsakey = os.environ["HOME"] + "/.ssh/id_rsa"
                     _ed25519key = os.environ["HOME"] + "/.ssh/id_ed25519"
+                    _rsakey = os.environ["HOME"] + "/.ssh/id_rsa"
+                    _ed25519key = "/tmp/x"
+                    _rsakey = "/tmp/x"
                     if os.path.isfile(_ed25519key):
-                        self.private = Ed25519Key.from_private_key_file(_ed25519key)
+                        try:
+                            self.private = Ed25519Key.from_private_key_file(_ed25519key)
+                        except PasswordRequiredException:
+                            from getpass import getpass
+
+                            passphrase = getpass(
+                                "Private key passphrase for %s: "
+                                % os.path.basename(_ed25519key)
+                            )
+                            try:
+                                self.private = Ed25519Key.from_private_key_file(
+                                    _ed25519key, password=passphrase
+                                )
+                            except PasswordRequiredException:
+                                raise SystemExit("Wrong passphrase")
                     elif os.path.isfile(_rsakey):
-                        self.private = RSAKey.from_private_key_file(_rsakey)
+                        try:
+                            self.private = RSAKey.from_private_key_file(_rsakey)
+                        except PasswordRequiredException:
+                            from getpass import getpass
+
+                            passphrase = getpass(
+                                "Private key passphrase for %s: "
+                                % os.path.basename(_rsakey)
+                            )
+                            try:
+                                self.private = RSAKey.from_private_key_file(
+                                    _rsakey, password=passphrase
+                                )
+                            except PasswordRequiredException:
+                                raise SystemExit("Wrong passphrase")
+
                     if not self.private:
-                        abort("No pubkey found - would need password")
-                self.ssh.connect(self.target, username=self.username, pkey=self.private)
+                        yellowprint("No pubkey found")
+                        from getpass import getpass
+
+                        self.password = getpass(
+                            "Login password for %s@%s: " % (self.username, self.target)
+                        )
+                self.ssh.connect(
+                    self.target,
+                    username=self.username,
+                    password=self.password,
+                    pkey=self.private,
+                )
                 self.transport = self.ssh.get_transport()
         except socket.timeout:
             timeout_input("Timeout. Server is not yet online", 10)
