@@ -20,4 +20,4 @@ if [ -d iso -a -z "$(ls -1 iso/*.iso 2>/dev/null)" -o ! -f iso/debian-current-ne
 	ln -sf $(cd iso;ls -1 debian-1*-netinst.iso|head -n1) iso/debian-current-netinst.iso
 fi
 
-python3 bin/$(basename $0).py
+python3 bin/$(basename $0).py $@

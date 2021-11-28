@@ -1,3 +1,4 @@
+import sys
 import os
 import base64
 import datetime
@@ -56,12 +57,12 @@ class X509Updater:
         if not targets:
             abort("Not a valid FQDN: `%s`" % self.name)
         v4addrs = [v4.address for v4 in targets]
-        if self.config["ipaddr"] not in v4addrs:
-            abort(
-                "Valid FQDN `%s` pointing to different IP than configured: %s (vs. %s)"
-                % (self.name, ", ".join(v4addrs), self.config["ipaddr"])
-            )
-
+        if "ipaddr" in self.config:
+            if self.config["ipaddr"] not in v4addrs:
+                abort(
+                    "Valid FQDN `%s` pointing to different IP than configured: %s (vs. %s)"
+                    % (self.name, ", ".join(v4addrs), self.config["ipaddr"])
+                )
         self.rootca_file = "certs/rootca.crt"
         if not os.path.exists(self.rootca_file):
             abort("No root CA found at '%s'" % self.rootca_file)
@@ -167,8 +168,15 @@ class X509Updater:
             )
 
     def passphrase_callback(self, void_bool, void1=None, void2=None):
-        if "key_passphrase" in self.config:
-            return self.config["key_passphrase"].encode()
+        if "key_passphrase" not in self.config:
+            try:
+                from getpass import getpass
+
+                self.config["key_passphrase"] = getpass("Private key passphrase: ")
+            except KeyboardInterrupt:
+                print(" ABORT!")
+                sys.exit(1)
+        return self.config["key_passphrase"].encode()
 
     def verify_key_and_cert(self):
         # FIXME: still verify cert+key are matching
