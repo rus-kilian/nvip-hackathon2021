@@ -363,6 +363,8 @@ class VMPreparer:
             sshpubkey=self.sshpubkey + self.config["ssh_root_pubkey"],
             clientid=vmconfig["clientid"],
             activationid=vmconfig["activation_id"],
+            ntp_servers=self.config["ntp_servers"],
+            dns_resolvers=self.config["dns_resolvers"],
         )
         if vm.guest.toolsRunningStatus == "guestToolsRunning":
             if vm.guest.ipAddress is not None:
@@ -371,11 +373,25 @@ class VMPreparer:
 
         self.vm = vm
         with VMUpdater(self.ipaddr) as vmu:
+            vmu.reconnect_if_needed()
+            # FIXME: until BAM learns to use cloud-init for this, let's just force the NTP config via PsmClient
+            substage("Ensuring NTP sync on %s" % self.ipaddr)
+            # FIXME: we should also add the BAM as NTP server on BDDS here
+            stdin, stdout, stderr = vmu.ssh.exec_command(  # nosec: B601
+                "ntpdate -u -b %s;PsmClient ntp set servers='%s,127.127.1.0';PsmClient ntp set 'server=127.127.1.0 stratum=12'"
+                % (
+                    self.config["ntp_servers"][0],
+                    ",".join(self.config["ntp_servers"]),
+                )
+            )
+            if stdout:
+                # just make sure to complete the command
+                stdout.readlines()
+            greenprint("NTP updated!")
             self.version = vmu.get_version()
             greenprint(self.version, prefix="Current version: ")
             if updates:
                 substage("Uploading updates to %s" % self.ipaddr)
-                vmu.reconnect_if_needed()
                 vmu.upload_files(updates)
                 while True:
                     vmu.retries = 10
@@ -944,6 +960,8 @@ def deploy_vm(
     rp=None,
     clientid=None,
     activationid=None,
+    ntp_servers=["0.pool.ntp.uni-stuttgart.de"],
+    dns_resolvers=["129.69.252.252", "129.69.252.202"],
 ):
     vm = None
     vms = list_vms(si, dc)
@@ -976,6 +994,13 @@ def deploy_vm(
         vm = get_vm(si, dc, name)
         # print(vm.summary)
     _metadata = {"dsmode": "local"}
+    _resolv_conf = "domain " + name.split(".", 1)[1]
+    for _n in dns_resolvers:
+        _resolv_conf += "\nnameserver " + _n
+    _resolv_conf += "\n"
+    _ntp_servers = []
+    for _n in ntp_servers:
+        _ntp_servers += ({"address": _n, "stratum": "default"},)
     _userdata = {
         # FIXME: no IPv6 config here
         "bluecat_netconf": {
@@ -1020,6 +1045,11 @@ def deploy_vm(
                 "content": open("lib/x509_update.sh", "r").read(),
                 "permissions": "0500",
             },
+            {
+                "path": "/etc/resolv.conf",
+                "content": _resolv_conf,
+                "permissions": "0644",
+            },
             # {
             #    "path": "/etc/systemd/system/update_installer.service",
             #    "content": open("lib/update_installer.service","r").read(),
@@ -1051,9 +1081,8 @@ def deploy_vm(
                     {
                         "ntpConfiguration": {
                             "enable": True,
-                            "servers": [
-                                {"address": "129.69.1.153", "stratum": "default"},
-                                {"address": "129.69.1.170", "stratum": "default"},
+                            "servers": _ntp_servers
+                            + [
                                 {"address": "127.127.0.10", "stratum": "1"},
                             ],
                         }
@@ -1064,7 +1093,7 @@ def deploy_vm(
                 "configurations": [
                     {
                         "dnsResolverConfiguration": {
-                            "servers": ["129.69.252.252", "129.69.252.202"]
+                            "servers": dns_resolvers,
                         }
                     }
                 ]
@@ -1151,6 +1180,7 @@ def deploy_vm(
             yellowprint(
                 "VM is already running - initiating reboot to re-activate cloud-init"
             )
+            # FIXME: the BDDS might even be able to consume this using POST configureServerServices
             wait_reboot(vm)
         else:
             boot_vm(vm)
@@ -1171,6 +1201,7 @@ def deploy_vm(
                                 + Style.RESET_ALL
                             )
                         else:
+                            # FIXME: we might even want to check GET getServerServicesConfigurationStatus here to ensure that cloud-init completed OK
                             greenprint(
                                 "\rcloud-init config target reached. VM now online as:"
                             )
