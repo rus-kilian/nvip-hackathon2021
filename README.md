@@ -23,7 +23,6 @@ All migration XML go into `migration`.
 
 
 # TODO:
-- IPv6 routing
 - IPv6 config of BAM
 - only pushing relevant updates would be nice
 - Server objects on BAM need to be dual-stacked (API needs to learn IPv6 first)

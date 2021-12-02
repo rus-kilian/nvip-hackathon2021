@@ -77,7 +77,7 @@ bam:
   gateway: '192.0.2.254'
   # FIXME: right now no IPv6 deployment on BAM!
   ip6addr: '2001:dc8::2:1'
-    #
+  gateway6: '2001:dc8::2:ffff'
   # whatever BCN assigns
   clientid: '00...'
   activation_id: '...'
@@ -90,6 +90,7 @@ bdds:
     netmask: 24
     gateway: '192.0.2.254'
     ip6addr: '2001:dc8::1:67'
+    gateway6: '2001:dc8::2:ffff'
     # whatever BCN assigns
     clientid: '00...'
     activation_id: '...'
