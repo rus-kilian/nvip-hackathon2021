@@ -234,23 +234,22 @@ class VMPreparer:
         self.snapshot_restored = None
 
     def __enter__(self):
-        if "ignore_cert_error" in self.config:
-            if self.config["ignore_cert_error"]:
-                # Disable the secure connection warning for demo purpose.
-                # This is not recommended in a production environment.
-                disable_warnings(InsecureRequestWarning)
-                self._insecure = True
-            else:
-                if "root_ca" not in self.config:
-                    redprint(
-                        "Missing 'root_ca' in config but instructed to verify remote https!"
-                    )
-                    sys.exit(1)
-                if not os.path.exists(self.config["root_ca"]):
-                    redprint("No such file: %s" % self.config["root_ca"])
-                    sys.exit(1)
-                # os.environ['REQUESTS_CA_BUNDLE'] = self.config['root_ca']  # Must be an existing file
-                self.context.load_verify_locations(self.config["root_ca"])
+        if self.config.get("ignore_cert_error"):
+            # Disable the secure connection warning for demo purpose.
+            # This is not recommended in a production environment.
+            disable_warnings(InsecureRequestWarning)
+            self._insecure = True
+        else:
+            if "root_ca" not in self.config:
+                redprint(
+                    "Missing 'root_ca' in config but instructed to verify remote https!"
+                )
+                sys.exit(1)
+            if not os.path.exists(self.config["root_ca"]):
+                redprint("No such file: %s" % self.config["root_ca"])
+                sys.exit(1)
+            # os.environ['REQUESTS_CA_BUNDLE'] = self.config['root_ca']  # Must be an existing file
+            self.context.load_verify_locations(self.config["root_ca"])
 
         for algo in ["ed25519", "rsa"]:
             if os.path.isfile(os.environ["HOME"] + "/.ssh/id_%s.pub" % algo):
@@ -363,8 +362,10 @@ class VMPreparer:
             sshpubkey=self.sshpubkey + self.config["ssh_root_pubkey"],
             clientid=vmconfig["clientid"],
             activationid=vmconfig["activation_id"],
-            ntp_servers=self.config["ntp_servers"],
-            dns_resolvers=self.config["dns_resolvers"],
+            ntp_servers=self.config.get("ntp_servers"),
+            dns_resolvers=self.config.get("dns_resolvers"),
+            mailrelay=self.config.get("mailrelay"),
+            hostmaster=self.config.get("hostmaster"),
         )
         if vm.guest.toolsRunningStatus == "guestToolsRunning":
             if vm.guest.ipAddress is not None:
@@ -374,20 +375,21 @@ class VMPreparer:
         self.vm = vm
         with VMUpdater(self.ipaddr) as vmu:
             vmu.reconnect_if_needed()
-            # FIXME: until BAM learns to use cloud-init for this, let's just force the NTP config via PsmClient
-            substage("Ensuring NTP sync on %s" % self.ipaddr)
-            # FIXME: we should also add the BAM as NTP server on BDDS here
-            stdin, stdout, stderr = vmu.ssh.exec_command(  # nosec: B601
-                "ntpdate -u -b %s;PsmClient ntp set servers='%s,127.127.1.0';PsmClient ntp set 'server=127.127.1.0 stratum=12'"
-                % (
-                    self.config["ntp_servers"][0],
-                    ",".join(self.config["ntp_servers"]),
+            if self.config.get("ntp_servers"):
+                # FIXME: until BAM learns to use cloud-init for this, let's just force the NTP config via PsmClient
+                substage("Ensuring NTP sync on %s" % self.ipaddr)
+                # FIXME: we should also add the BAM as NTP server on BDDS here
+                stdin, stdout, stderr = vmu.ssh.exec_command(  # nosec: B601
+                    "ntpdate -u -b %s;PsmClient ntp set servers='%s,127.127.1.0';PsmClient ntp set 'server=127.127.1.0 stratum=12'"
+                    % (
+                        self.config["ntp_servers"][0],
+                        ",".join(self.config["ntp_servers"]),
+                    )
                 )
-            )
-            if stdout:
-                # just make sure to complete the command
-                stdout.readlines()
-            greenprint("NTP updated!")
+                if stdout:
+                    # just make sure to complete the command
+                    stdout.readlines()
+                greenprint("NTP updated!")
             self.version = vmu.get_version()
             greenprint(self.version, prefix="Current version: ")
             if updates:
@@ -962,6 +964,8 @@ def deploy_vm(
     activationid=None,
     ntp_servers=["0.pool.ntp.uni-stuttgart.de"],
     dns_resolvers=["129.69.252.252", "129.69.252.202"],
+    mailrelay="smtp.example.com",
+    hostmaster="admin",
 ):
     vm = None
     vms = list_vms(si, dc)
@@ -994,13 +998,25 @@ def deploy_vm(
         vm = get_vm(si, dc, name)
         # print(vm.summary)
     _metadata = {"dsmode": "local"}
-    _resolv_conf = "domain " + name.split(".", 1)[1]
+    _domain = name.split(".", 1)[1]
+    _resolv_conf = "domain " + _domain
     for _n in dns_resolvers:
         _resolv_conf += "\nnameserver " + _n
     _resolv_conf += "\n"
     _ntp_servers = []
     for _n in ntp_servers:
         _ntp_servers += ({"address": _n, "stratum": "default"},)
+    if "@" not in hostmaster:
+        hostmaster += "@" + _domain
+    _mail_service_conf = (
+        "\n".join(
+            [
+                "export PROTEUS_MAIL_SMTP_HOST=" + mailrelay,
+                "export PROTEUS_MAIL_FROM=" + hostmaster,
+            ]
+        )
+        + "\n"
+    )
     _userdata = {
         # FIXME: no IPv6 config here
         "bluecat_netconf": {
@@ -1048,6 +1064,11 @@ def deploy_vm(
             {
                 "path": "/etc/resolv.conf",
                 "content": _resolv_conf,
+                "permissions": "0644",
+            },
+            {
+                "path": "/opt/server/proteus/etc/mail-service.cfg",
+                "content": _mail_service_conf,
                 "permissions": "0644",
             },
             # {

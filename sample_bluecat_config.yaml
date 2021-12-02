@@ -26,10 +26,13 @@ bam_password: 'does.not.matter.really'
 ntp_servers:
   - '0.pool.ntp.uni-stuttgart.de'
 
+mailrelay: 'smtp.exmaple.com'
+hostmaster: 'admin'
+
 dns_resolvers:
-  - '129.69.252.252'
-  - '2001:7c0:2053::'
-  - '129.69.252.202'
+  - '8.8.8.8'
+  - '2001:4860:4860::8888'
+  - '8.8.4.4'
 
 # servers that you do not want enabled in your lab deployment
 suspend_servers:
