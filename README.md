@@ -26,7 +26,6 @@ All migration XML go into `migration`.
 - IPv6 routing
 - IPv6 config of BAM
 - only pushing relevant updates would be nice
-- NTP / DNS / mailrelay on BAM
 - Server objects on BAM need to be dual-stacked (API needs to learn IPv6 first)
 - Validation of deployed BDDS (reading zones from BAM and asking DNS/DHCP via service)
 - deploying non-BDDS DNS secondary service(s) and ensure sync to DNS service

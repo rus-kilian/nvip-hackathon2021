@@ -31,8 +31,9 @@ hostmaster: 'admin'
 
 dns_resolvers:
   - '8.8.8.8'
-  - '2001:4860:4860::8888'
   - '8.8.4.4'
+  # FIXME: no IPv6 support in 9.3
+  #- '2001:4860:4860::8888'
 
 # servers that you do not want enabled in your lab deployment
 suspend_servers:
