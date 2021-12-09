@@ -84,6 +84,17 @@ bam:
 
    # X.509 key passphrase (if any)
   key_passphrase: 'supers3cret'
+  backup:
+    host: 'backup_target.your.domain'
+    dir: '.'
+    user: 'your_backup_user'
+    password: 'even_more_super_s3cr1t'
+    proto: 'sftp'
+    time: '0300'
+    retain: 15
+    prefix: 'bcn'
+    savelocal: 'true'
+
 bdds:
   - name: 'lab-bdds1.your.domain'
     ipaddr: '192.0.2.67'

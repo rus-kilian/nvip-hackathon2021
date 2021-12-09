@@ -140,7 +140,7 @@ def upload_ova(
     while lease.state == vim.HttpNfcLease.State.initializing:
         spinner("Waiting for lease to be ready...")
         time.sleep(1)
-    blueprint("\rLease initialized. Proceeding...    ")
+    blueprint(clear_line() + "\rLease initialized. Proceeding...    ", end="")
     if lease.state == vim.HttpNfcLease.State.error:
         redprint("Lease error: %s" % lease.error)
         return 1
@@ -440,7 +440,7 @@ def revert_to_snapshot(si, vm, snapshot):
     blueprint("Reverting VM %s to snapshot %s" % (vm.name, snapshot))
     snap_obj = get_snapshots_by_name_recursively(vm.snapshot.rootSnapshotList, snapshot)
     if len(snap_obj) != 1:
-        abort("Failed to access snapshot")
+        abort("Failed to access snapshot '%s'" % snapshot)
     snap_obj = snap_obj[0].snapshot
     wait_for_tasks(si, [snap_obj.RevertToSnapshot_Task()])
     greenprint("Done restoring VM %s to snapshot %s" % (vm.name, snapshot))
@@ -798,18 +798,21 @@ def boot_vm(vm):
 
 
 def update_cloudinit(si, vm, metadata, userdata):
-    print("Checking cloud-init guest info data")
+    print("Checking cloud-init guest info data", end="")
     try:
         md = json.loads(metadata)
     except Exception:
         try:
             md = yaml.safe_load(metadata)
         except Exception:
-            abort("Invalid data for metadata - neither JSON nor YAML!")
+            abort(clear_line() + "\rInvalid data for metadata - neither JSON nor YAML!")
     try:
         ud = yaml.safe_load(userdata)
     except Exception:
-        abort("Invalid YAML for userdata!\n-------\n%s\n-------" % userdata)
+        abort(
+            clear_line()
+            + "\rInvalid YAML for userdata!\n-------\n%s\n-------" % userdata
+        )
     # Ensure cloud-config prefix in YAML
     if not userdata.startswith("#cloud-config\n"):
         userdata = "#cloud-config\n" + userdata
@@ -822,18 +825,18 @@ def update_cloudinit(si, vm, metadata, userdata):
     for option in vm.config.extraConfig:
         if option.key == "guestinfo.cloudinit.metadata":
             if option.value == md:
-                greenprint("metadata matches")
+                greenprint("metadata matches", end="", prefix=clear_line() + "\r")
                 _md_match = True
             else:
                 yellowprint("metadata needs update!")
         if option.key == "guestinfo.cloudinit.userdata":
             if option.value == ud:
-                greenprint("userdata matches")
+                greenprint("userdata matches", end="", prefix=clear_line() + "\r")
                 _ud_match = True
             else:
                 yellowprint("userdata needs update!")
     if _md_match and _ud_match:
-        greenprint("Cloud-init data matches already!")
+        greenprint("Cloud-init data matches already!", prefix=clear_line() + "\r")
         return False
     cspec.extraConfig = [
         vim.option.OptionValue(key="guestinfo.cloudinit.metadata", value=md),
@@ -843,7 +846,7 @@ def update_cloudinit(si, vm, metadata, userdata):
     # task = vm.ReconfigVM_Task(cspec)
     # wait_for_tasks(si, [task])
     # print(vm.summary)
-    yellowprint("Cloud-init updated!")
+    yellowprint("Cloud-init guest data updated!", prefix=clear_line() + "\r")
     return True
 
 

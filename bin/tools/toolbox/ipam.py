@@ -77,7 +77,7 @@ def encode_properties(props):
     elif isinstance(props, str):
         return props
     else:
-        return "|".join(["=".join(pair) for pair in props.items()]) + "|"
+        return "|".join(["%s=%s" % (str(k), str(v)) for k, v in props.items()]) + "|"
 
 
 def split_properties(props):
@@ -192,6 +192,54 @@ class IpamAPI:
             **kwargs
         )
 
+    def add_zone(self, absoluteName, parentId, deployable=True, **kwargs):
+        payload = {
+            "absoluteName": absoluteName,
+            "parentId": parentId,
+            "properties": {"deployable": str(deployable).lower()},
+        }
+        return self.raw_post_json("addZone", params=json_to_entity(payload), **kwargs)
+
+    def add_ip4_block(self, name, parentId, prefix, properties={}, **kwargs):
+        if not properties.get("name"):
+            properties["name"] = name
+        payload = {"CIDR": prefix, "parentId": parentId, "properties": properties}
+        return self.raw_post_json(
+            "addIP4BlockByCIDR", params=json_to_entity(payload), **kwargs
+        )
+
+    def add_ip6_block(self, name, parentId, prefix, properties, **kwargs):
+        payload = {
+            "prefix": prefix,
+            "name": name,
+            "parentId": parentId,
+            "properties": properties,
+        }
+        return self.raw_post_json(
+            "addIP6BlockByPrefix", params=json_to_entity(payload), **kwargs
+        )
+
+    def add_ip4_network(self, name, parentId, prefix, properties, **kwargs):
+        if not properties:
+            properties = {}
+        if not properties.get("name"):
+            properties["name"] = name
+        payload = {"CIDR": prefix, "blockId": parentId, "properties": properties}
+        return self.raw_post_json(
+            "addIP4Network", params=json_to_entity(payload), **kwargs
+        )
+
+    def add_ip6_network(self, name, parentId, prefix, properties, **kwargs):
+        payload = {
+            "prefix": prefix,
+            "name": name,
+            "parentId": parentId,
+            "properties": properties,
+        }
+        return self.raw_post_json(
+            "addIP6NetworkByPrefix", params=json_to_entity(payload), **kwargs
+        )
+
     def replace_server(self, oldname, srvid, name, ipv4, **kwargs):
         payload = {
             "name": name,
@@ -209,7 +257,7 @@ class IpamAPI:
         )
 
     def add_dns_deployment_role(
-        self, entityId, properties, serverInterfaceId, roletype, **kwargs
+        self, entityId, serverInterfaceId, roletype, properties={}, **kwargs
     ):
         payload = json_to_entity(
             {
@@ -223,6 +271,21 @@ class IpamAPI:
             print(payload)
         return self.raw_post_json(
             "addDNSDeploymentRole", data={}, params=payload, **kwargs
+        )
+
+    def add_dns_deployment_option(self, entityId, name, properties, value, **kwargs):
+        payload = json_to_entity(
+            {
+                "entityId": entityId,
+                "name": name,
+                "properties": properties,
+                "value": value,
+            }
+        )
+        if debug:
+            print(payload)
+        return self.raw_post_json(
+            "addDNSDeploymentOption", data={}, params=payload, **kwargs
         )
 
     def disable_server(self, id, **kwargs):  # pylint: disable=W0622
@@ -249,6 +312,17 @@ class IpamAPI:
         return self._post_rest(
             "deployServer", params=json_to_entity({"serverId": id}), **kwargs
         )
+
+    def get_server_deployment_status(self, id, **kwargs):  # pylint: disable=W0622
+        res = self._get_rest(
+            "getServerDeploymentStatus",
+            params=json_to_entity({"serverId": id}),
+            **kwargs
+        )
+        if not res.status_code == 200:
+            return -101
+        else:
+            return int(res.text)
 
     def update_entity(self, entity, **kwargs):  # pylint: disable=W0622
         if debug:
@@ -329,6 +403,15 @@ class IpamAPI:
                 yield decode_properties(elem)
             if len(block) != params["count"]:
                 break
+
+    def get_dns_option(self, entityId, name, serverId, **kwargs):
+        _res = self.raw_get_json(
+            "getDNSDeploymentOption",
+            params={"entityId": entityId, "name": name, "serverId": serverId},
+            **kwargs
+        )
+        if _res:
+            return [decode_properties(r) for r in _res]
 
     def get_server_roles(self, serverId, **kwargs):
         return [
@@ -494,7 +577,9 @@ class IpamConnection(IpamAPI):
             if response.text:
                 return json.loads(response.text)
             return
-        raise IpamAPIError("Request to {!r} failed: {!r}".format(path, response))
+        raise IpamAPIError(
+            "Request to {!r} failed: {!r}\n{!r}".format(path, response, response.text)
+        )
 
     def raw_post_json(self, path, *args, **kwargs):
         response = self._post_rest(path, *args, **kwargs)
@@ -509,7 +594,9 @@ class IpamConnection(IpamAPI):
                 return
             except json.decoder.JSONDecodeError:
                 return
-        raise IpamAPIError("Request to {!r} failed: {!r}".format(path, response))
+        raise IpamAPIError(
+            "Request to {!r} failed: {!r}\n{!r}".format(path, response, response.text)
+        )
 
     def raw_put_json(self, path, *args, **kwargs):
         response = self._put_rest(path, *args, **kwargs)
@@ -521,19 +608,25 @@ class IpamConnection(IpamAPI):
             if response.text:
                 return json.loads(response.text)
             return
-        raise IpamAPIError("Request to {!r} failed: {!r}".format(path, response))
+        raise IpamAPIError(
+            "Request to {!r} failed: {!r}\n{!r}".format(path, response, response.text)
+        )
 
 
 class IpamGenericCache:
     def __init__(self, connection):
         self._conn = connection
+        self.clear_cache()
+
+    def clear_cache(self):
         self._generic_cache_configurations = {}
         self._generic_cache_views = {}
         self._generic_cache_zones = {}
         self._generic_cache_networks = {}
+        self._generic_cache_dns_options = {}
 
     def generic_get_configuration(self, config_name):
-        if config_name not in self._generic_cache_configurations:
+        if not self._generic_cache_configurations.get(config_name):
             c = self._conn.get_entity_by_name(0, config_name, "Configuration")
             self._generic_cache_configurations[config_name] = c
         return self._generic_cache_configurations[config_name]
@@ -543,11 +636,32 @@ class IpamGenericCache:
             self._generic_cache_views[config_name] = {}
         views = self._generic_cache_views[config_name]
 
-        if view_name not in views:
+        if not views.get(view_name):
             c = self.generic_get_configuration(config_name)
 
             views[view_name] = self._conn.get_entity_by_name(c["id"], view_name, "View")
         return views[view_name]
+
+    def generic_get_dns_option(self, entityId, name, serverId):
+        if name not in self._generic_cache_dns_options:
+            self._generic_cache_dns_options[name] = {}
+        for s in [serverId, 0]:
+            if s not in self._generic_cache_dns_options[name]:
+                self._generic_cache_dns_options[name][s] = {}
+            if entityId in self._generic_cache_dns_options[name][s]:
+                return self._generic_cache_dns_options[name][s][entityId]
+        if "default" in self._generic_cache_dns_options[name][serverId]:
+            return self._generic_cache_dns_options[name][serverId]["default"]
+        # no cache hit - actually fetch DNS options
+        for s in [serverId, 0]:
+            _res = self._conn.get_dns_option(entityId, name, s)
+            if _res:
+                self._generic_cache_dns_options[name][serverId][entityId] = _res
+                return _res
+        # default to server options or None
+        _res = self._conn.get_dns_option(serverId, name, serverId)
+        self._generic_cache_dns_options[name][serverId]["default"] = _res
+        return _res
 
     def generic_find_zone(self, config_name, view_name, zone):
         # cut off trailing dot
@@ -682,8 +796,18 @@ class IpamUS(IpamGenericCache, IpamAPI):
         if _id:
             return _id
 
+    def get_dns_option(self, entityid, name, serverid):
+        return self.generic_get_dns_option(entityid, name, serverid)
+
     def get_server_roles(self, id):
         return self._conn.get_server_roles(id)
+
+    def get_entities(
+        self,
+        entityid,
+        enttype=["IP4Block", "IP4Network", "IP6Block", "IP6Network", "View", "Zone"],
+    ):
+        return self._conn.get_entities(entityid, enttype)
 
     def find_network_parent(self, network):
         return self.generic_find_network_parent(IpamUS.CONFIGURATION, network)
@@ -700,15 +824,54 @@ class IpamUS(IpamGenericCache, IpamAPI):
     def add_entity(self, name, t, parent, properties=""):
         return self._conn.add_entity(name, t, parent, properties)
 
+    def add_zone(self, absoluteName, parentId, deployable=True):
+        return self._conn.add_zone(absoluteName, parentId, deployable)
+
+    def add_block(self, name, parentId, prefix, properties={}):
+        try:
+            cidr = netaddr.IPNetwork(prefix)
+        except Exception as e:
+            eprint("Invalid IP prefix (no CIDR): " + repr(e))
+            raise
+        if cidr.ip.version == 4:
+            if not properties.get("defaultView"):
+                properties["defaultView"] = self.get_extern_view_id()
+            return self._conn.add_ip4_block(name, parentId, prefix, properties)
+        else:
+            return self._conn.add_ip6_block(name, parentId, prefix, properties)
+
+    def add_network(self, name, parentId, prefix, properties={}):
+        try:
+            cidr = netaddr.IPNetwork(prefix)
+        except Exception as e:
+            eprint("Invalid IP prefix (no CIDR): " + repr(e))
+            raise
+        if cidr.ip.version == 4:
+            if not properties.get("defaultView"):
+                properties["defaultView"] = self.get_extern_view_id()
+            return self._conn.add_ip4_network(name, parentId, prefix, properties)
+        else:
+            return self._conn.add_ip6_network(name, parentId, prefix, properties)
+
     def replace_server(self, oldname, srvid, name, ipv4):
         return self._conn.replace_server(oldname, srvid, name, ipv4)
 
     def add_dns_deployment_role(
-        self, entityId, properties, serverInterfaceId, roletype
+        self,
+        entityId,
+        serverInterfaceId,
+        roletype,
+        properties={},
     ):
         return self._conn.add_dns_deployment_role(
-            entityId, properties, serverInterfaceId, roletype
+            entityId,
+            serverInterfaceId,
+            roletype,
+            properties,
         )
+
+    def add_dns_deployment_option(self, entityId, name, properties, value):
+        return self._conn.add_dns_deployment_option(entityId, name, properties, value)
 
     def disable_server(self, id):
         return self._conn.disable_server(id)
@@ -718,6 +881,9 @@ class IpamUS(IpamGenericCache, IpamAPI):
 
     def deploy_server(self, id):
         return self._conn.deploy_server(id)
+
+    def get_server_deployment_status(self, id):
+        return self._conn.get_server_deployment_status(id)
 
     def update_entity(self, entity):
         return self._conn.update_entity(entity)
@@ -731,6 +897,12 @@ class IpamUS(IpamGenericCache, IpamAPI):
             self._configuration_id = self.add_entity(
                 IpamUS.CONFIGURATION, "Configuration", 0
             )
+            print("Configuration ID: %d" % int(self._configuration_id))
         if not self.get_extern_view_id():
             print("No default view found in Configuration. Bootstrapping one")
             self.add_entity(IpamUS.EXTERN_VIEW, "View", self._configuration_id)
+            self.clear_cache()
+            print(
+                "View ID '%s': %d"
+                % (IpamUS.EXTERN_VIEW, int(self.get_extern_view_id()))
+            )

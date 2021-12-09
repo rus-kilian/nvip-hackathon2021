@@ -14,7 +14,6 @@ from .internals import (
     greenprint,
     blueprint,
     yellowprint,
-    colorprint,
     prompt_action,
     timeout_input,
     statusprint,
@@ -324,7 +323,7 @@ class VMPreparer:
             # FIXME: need to catch ssh connection closed still
             timeout_input("Reconnecting to server to resume tailing log")
 
-    def prepare_vm(self, vmconfig, ova, updates):
+    def prepare_vm(self, vmconfig, ova, updates, snapshot=None):
         vm = None
         self.vms = list_vms(self.si, self.dc)
         self.name = vmconfig["name"]
@@ -338,11 +337,18 @@ class VMPreparer:
             snapshots = get_all_vm_snapshots(self.vm)
             if snapshots:
                 greenprint("Found existing VM with snapshots!")
-                snapshot = prompt_action(snapshots, "snapshot")
+                if snapshot not in snapshots:
+                    print("No such snapshot '%s'" % snapshot)
+                    snapshot = None
+                if not snapshot:
+                    snapshot = prompt_action(snapshots, "snapshot")
                 if snapshot:
                     revert_to_snapshot(self.si, self.vm, snapshot)
                     self.snapshot_restored = snapshot
                     return
+        _sshpubkey = self.sshpubkey
+        if "ssh_root_pubkey" in self.config:
+            _sshpubkey += self.config["ssh_root_pubkey"]
         vm = deploy_vm(
             si=self.si,
             dc=self.dc,
@@ -360,17 +366,21 @@ class VMPreparer:
             gateway6=vmconfig["gateway6"],
             root_pw=self.config["root_pw"],
             admin_pw=self.config["admin_pw"],
-            sshpubkey=self.sshpubkey + self.config["ssh_root_pubkey"],
+            sshpubkey=_sshpubkey,
             clientid=vmconfig["clientid"],
             activationid=vmconfig["activation_id"],
             ntp_servers=self.config.get("ntp_servers"),
             dns_resolvers=self.config.get("dns_resolvers"),
             mailrelay=self.config.get("mailrelay"),
             hostmaster=self.config.get("hostmaster"),
+            backup=self.config.get("backup"),
         )
         if vm.guest.toolsRunningStatus == "guestToolsRunning":
             if vm.guest.ipAddress is not None:
-                if vm.guest.ipAddress == "192.168.1.2":
+                if (
+                    vm.guest.ipAddress == "192.168.1.1"
+                    or vm.guest.ipAddress == "192.168.1.2"
+                ):
                     abort("cloud-init update did not complete!", 2)
 
         self.vm = vm
@@ -378,7 +388,7 @@ class VMPreparer:
             vmu.reconnect_if_needed()
             if self.config.get("ntp_servers"):
                 # FIXME: until BAM learns to use cloud-init for this, let's just force the NTP config via PsmClient
-                substage("Ensuring NTP sync on %s" % self.ipaddr)
+                substage("Ensuring NTP sync on %s (%s)" % (self.name, self.ipaddr))
                 # FIXME: we should also add the BAM as NTP server on BDDS here
                 stdin, stdout, stderr = vmu.ssh.exec_command(  # nosec: B601
                     "ntpdate -u -b %s;PsmClient ntp set servers='%s,127.127.1.0';PsmClient ntp set 'server=127.127.1.0 stratum=12'"
@@ -394,7 +404,7 @@ class VMPreparer:
             self.version = vmu.get_version()
             greenprint(self.version, prefix="Current version: ")
             if updates:
-                substage("Uploading updates to %s" % self.ipaddr)
+                substage("Uploading updates to %s (%s)" % (self.name, self.ipaddr))
                 vmu.upload_files(updates)
                 while True:
                     vmu.retries = 10
@@ -422,7 +432,10 @@ class VMPreparer:
                     running.set()
                     logthread = threading.Thread(target=self.tailf, args=(vmu, running))
                     logthread.start()
-                    substage("%d updates pending - installing" % len(pending))
+                    substage(
+                        "%d updates pending - installing on %s"
+                        % (len(pending), self.name)
+                    )
                     try:
                         stdin, stdout, stderr = vmu.ssh.exec_command(  # nosec: B601
                             # XXX: we want to control the run of the update installer from here
@@ -445,6 +458,19 @@ class VMPreparer:
                     self.version = vmu.get_version()
                     blueprint(self.version, prefix="Current version: ")
 
+            if self.config.get("backup"):
+                substage("Enabling backup cronjob on %s" % self.name)
+                try:
+                    stdin, stdout, stderr = vmu.ssh.exec_command(  # nosec: B601
+                        "/usr/local/bcn/backup.pl -c"
+                    )
+                    stdin.close()
+                    for line in iter(stdout.readline, ""):
+                        blueprint(line, end="")
+                    greenprint("Cronjob added")
+                except KeyboardInterrupt:
+                    print("")
+                    abort("Execution aborted")
         substage(
             "Done preparing VM '%s' (version: %s)" % (self.name, self.version),
             update=False,
@@ -464,6 +490,11 @@ class VMPreparer:
                     datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 ),
             )
+
+    def snapshot(
+        self, name=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), description=""
+    ):
+        snapshot_vm(self.si, self.vm, name, description)
 
     def cleanup_snapshots(self, vm=None):
         if not vm:
@@ -930,7 +961,7 @@ class VMPreparer:
                     % (v["copy"], srv)
                 )
 
-    def deploy_servers(self, servers):
+    def deploy_servers(self, servers, wait=False):
         self.ensure_connection()
         _all_servers = self.get_all_servers()
         for srv in servers:
@@ -939,7 +970,19 @@ class VMPreparer:
                 continue
             print("Deploying server %s " % srv, end="")
             self.connection.deploy_server(_all_servers[srv]["id"])
+            if not wait:
+                status = None
+            else:
+                status = 1
+                while status not in [2, 3, 4, 5, 7]:
+                    status = self.connection.get_server_deployment_status(
+                        _all_servers[srv]["id"]
+                    )
+                    spinner("Deploying server %s: %d" % (srv, status))
+                    time.sleep(1)
+                print(clear_line() + "\rDeployed server %s " % srv, end="")
             greenprint("OK")
+            return status
 
 
 def deploy_vm(
@@ -968,6 +1011,7 @@ def deploy_vm(
     dns_resolvers=["129.69.252.252", "129.69.252.202"],
     mailrelay="smtp.example.com",
     hostmaster="admin",
+    backup=None,
 ):
     vm = None
     vms = list_vms(si, dc)
@@ -1080,6 +1124,34 @@ def deploy_vm(
             # },
         ],
     }
+    if backup:
+        backuptime = backup.get("time", "0300")
+        backupretain = backup.get("retain", 15)
+        backupprefix = backup.get("prefix", "bcn")
+        backupsavelocal = str(backup.get("savelocal", "true")).lower()
+        backupdir = backup.get("dir", ".")
+        backuphost = backup["host"]
+        backupuser = backup["user"]
+        backuppassword = backup["password"]
+        backupproto = backup["proto"]
+        _backup_conf = (open("lib/backup.conf", "r").read(),)
+        _userdata["write_files"] += [
+            {
+                "path": "/etc/bcn/backup.conf",
+                "content": _backup_conf.format(
+                    backuptime=backuptime,
+                    backupretain=backupretain,
+                    backupprefix=backupprefix,
+                    backupsavelocal=backupsavelocal,
+                    backuphost=backuphost,
+                    backupdir=backupdir,
+                    backupuser=backupuser,
+                    backuppassword=backuppassword,
+                    backupproto=backupproto,
+                ),
+                "permissions": "0644",
+            },
+        ]
 
     bcn_payload = {
         "version": "1.0.0",
@@ -1207,8 +1279,7 @@ def deploy_vm(
             wait_reboot(vm)
         else:
             boot_vm(vm)
-        print("")
-        colorprint(Fore.BLUE, "Sleeping up to 2min")
+        print("Sleeping up to 2min ...", end="")
         timeout = 120
         _t = 0
         try:
@@ -1217,22 +1288,29 @@ def deploy_vm(
                     break
                 if vm.guest.toolsRunningStatus == "guestToolsRunning":
                     if vm.guest.ipAddress is not None:
-                        if vm.guest.ipAddress == "192.168.1.2":
-                            spinner(
-                                Fore.CYAN
-                                + "Initrd update complete - waiting for cloud-init"
-                                + Style.RESET_ALL
-                            )
+                        if ipaddr == "192.168.1.1" or ipaddr == "192.168.1.2":
+                            # no change of default IP desired - just counting down
+                            pass
                         else:
-                            # FIXME: we might even want to check GET getServerServicesConfigurationStatus here to ensure that cloud-init completed OK
-                            greenprint(
-                                "\rcloud-init config target reached. VM now online as:"
-                            )
-                            greenprint(vm.guest.ipAddress, prefix="IP: ")
-                            greenprint(
-                                vm.guest.toolsRunningStatus, prefix="Tools Status: "
-                            )
-                            break
+                            if (
+                                vm.guest.ipAddress == "192.168.1.1"
+                                or vm.guest.ipAddress == "192.168.1.2"
+                            ):
+                                spinner(
+                                    Fore.CYAN
+                                    + "Initrd update complete - waiting for cloud-init"
+                                    + Style.RESET_ALL
+                                )
+                            else:
+                                # FIXME: we might even want to check GET getServerServicesConfigurationStatus here to ensure that cloud-init completed OK
+                                greenprint(
+                                    "\rcloud-init config target reached. VM now online as:"
+                                )
+                                greenprint(vm.guest.ipAddress, prefix="IP: ")
+                                greenprint(
+                                    vm.guest.toolsRunningStatus, prefix="Tools Status: "
+                                )
+                                break
                 time.sleep(2)
                 _t = _t + 2
         except KeyboardInterrupt:
@@ -1413,9 +1491,10 @@ class VMUpdater:
                 )
                 self.transport = self.ssh.get_transport()
         except socket.timeout:
-            timeout_input("Timeout. Server is not yet online", 10)
+            timeout_input("Timeout. Server is not yet online", 10, end="")
+            print(clear_line() + "\r", end="")
 
-    def reconnect_if_needed(self, timeout=180):
+    def reconnect_if_needed(self, timeout=300):
         _timeout = time.time() + timeout
         _conn_status = "active"
         while True:
@@ -1434,7 +1513,9 @@ class VMUpdater:
             timeout_input(
                 "No active transport - server either rebooting or still initializing",
                 60,
+                end="",
             )
+            print(clear_line() + "\r", end="")
             self.connect()
             _conn_status = "reestablished"
 

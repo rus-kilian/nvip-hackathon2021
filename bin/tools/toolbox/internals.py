@@ -129,7 +129,7 @@ def prompt_action(backups, description, action="Restore"):
     return backup
 
 
-def timeout_input(text, timeout=30, hint="(press RETURN to skip)"):
+def timeout_input(text, timeout=30, hint="(press RETURN to skip)", end="\n"):
     _input = None
     old_settings = set_nonblocking()
     try:
@@ -157,10 +157,10 @@ def timeout_input(text, timeout=30, hint="(press RETURN to skip)"):
         if _input:
             _ans = _input.decode("utf-8").strip()
             print(clear_line() + "\r%s " % text, end="")
-            colorprint(_ans, Style.BRIGHT + Fore.WHITE)
+            colorprint(_ans, Style.BRIGHT + Fore.WHITE, end=end)
             return _ans
         else:
-            blueprint(clear_line() + "\r%s" % text)
+            blueprint(clear_line() + "\r%s" % text, end=end)
     except KeyboardInterrupt:
         revert_nonblocking(old_settings)
         print("")
