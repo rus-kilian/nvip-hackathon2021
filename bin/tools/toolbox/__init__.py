@@ -973,12 +973,23 @@ class VMPreparer:
             if not wait:
                 status = None
             else:
-                status = 1
-                while status not in [2, 3, 4, 5, 7]:
+                status = "QUEUED"
+                while status not in [
+                    "CANCELLED",
+                    "FAILED",
+                    "NOT_DEPLOYED",
+                    "WARNING",
+                    "INVALID",
+                    "DONE",
+                ]:
                     status = self.connection.get_server_deployment_status(
                         _all_servers[srv]["id"]
                     )
-                    spinner("Deploying server %s: %d" % (srv, status))
+                    spinner(
+                        clear_line()
+                        + "\rDeploying server %s: %s"
+                        % (srv, Fore.YELLOW + Style.BRIGHT + status + Style.RESET_ALL)
+                    )
                     time.sleep(1)
                 print(clear_line() + "\rDeployed server %s " % srv, end="")
             greenprint("OK")
