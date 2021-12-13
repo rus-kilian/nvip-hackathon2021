@@ -42,19 +42,20 @@ class IpamAPIError(Exception):
     pass
 
 
-# TODO: support ipam style of partial delegations
 def network_zone_name(net):
     # drop trailing dot and leading octets/nibbles depending no prefixlen
     if isinstance(net, str):
         net = netaddr.IPNetwork(net)
     if net.version == 4:
+        rdns = net.network.reverse_dns.split(".")[
+            4 - net.prefixlen // 8 : -1  # noqa: E203
+        ]
         if not net.prefixlen % 8 == 0:
-            raise SystemExit("Only aligned subnets allowed")
-        return ".".join(
-            net.network.reverse_dns.split(".")[
-                4 - net.prefixlen // 8 : -1  # noqa: E203
-            ]
-        )
+            if net.prefixlen < 25:
+                raise SystemExit("Only aligned subnets allowed")
+            else:
+                rdns[0] = "%s-%d" % (rdns[0], net.prefixlen)
+        return ".".join(rdns)
     if not net.version == 6:
         raise SystemExit("Unsupported net.version: %d" % net.version)
     if not net.prefixlen % 4 == 0:
