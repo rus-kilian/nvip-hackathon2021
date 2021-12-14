@@ -6,6 +6,7 @@ import sys
 import yaml
 import dns.zone
 import dns.query
+import ipaddress
 
 from tools.toolbox import (
     find_ova,
@@ -15,7 +16,7 @@ from tools.toolbox import (
     substage,
     title,
 )
-from tools.toolbox.internals import redprint, greenprint
+from tools.toolbox.internals import redprint, greenprint, statusprint
 from tools.vmware import (
     get_all_vm_snapshots,
     revert_to_snapshot,
@@ -57,7 +58,6 @@ else:
     sys.exit(1)
 
 
-servers = None
 OPTIONS = [
     "ALLOW_NOTIFY",
     "ALLOW_QUERY",
@@ -70,22 +70,26 @@ OPTIONS = [
 
 def show_delegation(base, target, ns):
     print("Checking for delegation from %s to %s on %s" % (base, target, ns))
-
-    print("Fetching zone %s via AXFR" % base)
+    statusprint("Fetching zone %s via AXFR" % base)
     zone_axfr = dns.query.xfr(ns, base)
     z1 = dns.zone.from_xfr(zone_axfr)
     subdomain = target.replace("." + base, "")
-    print("Searching for NS to zone %s" % subdomain)
+    statusprint("Searching for NS to zone %s" % subdomain)
     try:
         delegation = z1.find_rdataset(subdomain, "NS")
-        print(delegation)
+        if debug:
+            print(delegation)
     except KeyError:
+        statusprint()
         redprint("No delegation from %s to %s" % (base, target))
         print(z1.to_text())
 
     z2 = dns.zone.from_xfr(dns.query.xfr(ns, target))
     soa = z2.find_rdataset("@", "SOA")
-    print(soa)
+    if debug:
+        print(soa)
+    statusprint("Delegation matches for: ")
+    greenprint(target)
 
 
 def get_children(conn, servers, entityId, type=None):
@@ -186,20 +190,24 @@ try:
 
         title("Refreshing serverlist")
         servers = v.get_all_servers()
-        dns_hm_iface = v.connection.get_server_interface(servers[dns_hm]["id"])
+        dns_hm_id = servers[dns_hm]["id"]
+        dns_hm_iface = v.connection.get_server_interface(dns_hm_id)
         dummy_iface = v.connection.get_server_interface(servers["dummy"]["id"])
 
+        v.connection.add_dns_deployment_option(
+            servers["dummy"]["id"], "allow-notify", "2.0.0.0/32"
+        )
+
         stage("Adding zones")
-        add_options = [v.connection._configuration_id]
         viewid = v.connection.get_extern_view_id()
-        v.connection.add_dns_deployment_option(viewid, "allow-xfer", None, "0.0.0.0/0")
+        v.connection.add_dns_deployment_option(viewid, "allow-xfer", "0.0.0.0/0")
         if not viewid:
             print("No VIEW ID!")
             sys.exit(1)
         substage("Adding 'bluecat'")
         _z1 = v.connection.add_zone("bluecat", viewid, False)
         v.connection.add_dns_deployment_role(viewid, dns_hm_iface, "MASTER")
-        add_options.append(_z1)
+        add_options = [_z1]
         substage("Adding 'lab.bluecat'")
         _z2 = v.connection.add_zone(
             "lab.bluecat",
@@ -213,29 +221,18 @@ try:
         )
         add_options.append(_z3)
 
-        stage("Adding deployment options and comparing results")
-        for idx, _v in enumerate(add_options):
-            substage("Adding deployment option at %s" % _v)
-            v.connection.add_dns_deployment_option(
-                _v, "allow-notify", None, "0.0.0.%d/32" % idx
-            )
-            print(
-                "Current DNS options at 'dnssec.lab.bluecat':",
-                v.connection.get_dns_option(_z3, "allow-notify", servers[dns_hm]["id"]),
-            )
-
         # FIXME: add DNSSEC config to "lab.bluecat"
         # FIXME: add DNSSEC config to "dnssec.lab.bluecat"
         # FIXME: gracefully remove DNSSEC from "dnssec.lab.bluecat" ?
         # HINT: https://datatracker.ietf.org/doc/html/rfc8901
 
+        stage("Bootstrapping minimal IPv4 block/network")
         substage("Adding 10/8 block")
         _b1 = v.connection.add_block(
             v.connection._configuration_id,
             "10.0.0.0/8",
         )
-        add_options = [_b1]
-        v.connection.add_dns_deployment_option(_b1, "allow-xfer", None, "0.0.0.0/0")
+        v.connection.add_dns_deployment_option(_b1, "allow-xfer", "0.0.0.0/0")
         substage("Adding DNS MASTER to 10/8 block")
         v.connection.add_dns_deployment_role(
             _b1, dns_hm_iface, "MASTER", {"view": viewid}
@@ -246,13 +243,14 @@ try:
             _n1, dns_hm_iface, "MASTER", {"view": viewid}
         )
 
+        stage("Bootstrapping minimal IPv6 block/network")
         _v6_root = v.connection.find_network("2000::/3")["id"]
         substage("Adding 2001:7c0:2000::/40 block")
         _v6_b1 = v.connection.add_block(
             _v6_root,
             "2001:7c0:2000::/40",
         )
-        v.connection.add_dns_deployment_option(_v6_b1, "allow-xfer", None, "0.0.0.0/0")
+        v.connection.add_dns_deployment_option(_v6_b1, "allow-xfer", "0.0.0.0/0")
         substage("Adding DNS MASTER to 2001:7c0:2000::/40 block")
         v.connection.add_dns_deployment_role(
             _v6_b1, dns_hm_iface, "MASTER", {"view": viewid}
@@ -285,17 +283,103 @@ try:
         )
         # FIXME: verify DS delegation to 10/24 on 10/18
 
+        stage("Adding deployment options to zones and comparing results")
+
+        def verify_current_dns_options(ip, zone=True, v4=True, v6=True):
+            v.connection.clear_cache()
+            res = str(v.connection.get_dns_option(_z3, "allow-notify", dns_hm_id))
+            if res == ip:
+                greenprint(
+                    res,
+                    prefix="[VALID] Current DNS options at 'dnssec.lab.bluecat': ",
+                )
+            else:
+                redprint(
+                    res,
+                    prefix="[FAILED] Current DNS options at 'dnssec.lab.bluecat': ",
+                )
+            res = str(v.connection.get_dns_option(_n1, "allow-notify", dns_hm_id))
+            if res == ip:
+                greenprint(
+                    res,
+                    prefix="[VALID] Current DNS options at '10.0.0.0/24': ",
+                )
+            else:
+                redprint(
+                    res,
+                    prefix="[FAILED] Current DNS options at '10.0.0.0/24': ",
+                )
+            res = str(v.connection.get_dns_option(_v6_n1, "allow-notify", dns_hm_id))
+            if res == ip:
+                greenprint(
+                    res,
+                    prefix="[VALID] Current DNS options at '2001:7c0:2000:1000::/64': ",
+                )
+            else:
+                redprint(
+                    res,
+                    prefix="[FAILED] Current DNS options at '2001:7c0:2000:1000::/64': ",
+                )
+
+        substage("Starting baseline")
+        verify_current_dns_options("None")
+
+        voidip = ipaddress.ip_address("192.0.2.1")
+
+        def update_dns_option(level, entityid, zone=True, v4=True, v6=True, srv=None):
+            global voidip
+            _ip = "%s/32" % str(voidip)
+            if not srv:
+                substage("Adding %s DNS option (all servers): %s" % (level, _ip))
+                v.connection.add_dns_deployment_option(entityid, "allow-notify", _ip)
+            else:
+                substage(
+                    "Adding %s DNS option (this server only): %s" % (level, str(voidip))
+                )
+                v.connection.add_dns_deployment_option(
+                    entityid, "allow-notify", _ip, server=srv
+                )
+            verify_current_dns_options(_ip, zone, v4, v6)
+            voidip += 1
+
+        update_dns_option("Configuration level", v.connection._configuration_id)
+        update_dns_option(
+            "Configuration level", v.connection._configuration_id, srv=dns_hm_id
+        )
+
+        update_dns_option("Server level", dns_hm_id)
+
+        update_dns_option("View level", viewid)
+        update_dns_option("View level", viewid, srv=dns_hm_id)
+
+        update_dns_option("'bluecat' zone", _z1, v4=False, v6=False)
+        update_dns_option("'bluecat' zone", _z1, srv=dns_hm_id, v4=False, v6=False)
+        update_dns_option("'lab.bluecat' zone", _z2, v4=False, v6=False)
+        update_dns_option("'lab.bluecat' zone", _z2, srv=dns_hm_id, v4=False, v6=False)
+
+        update_dns_option("IPv4 block level", _b1, zone=False, v6=False)
+        update_dns_option("IPv4 block level", _b1, srv=dns_hm_id, zone=False, v6=False)
+
+        update_dns_option("IPv6 GUA root level", _v6_root, zone=False, v4=False)
+        update_dns_option(
+            "IPv6 GUA root level", _v6_root, srv=dns_hm_id, zone=False, v4=False
+        )
+        update_dns_option("IPv6 block level", _v6_b1, zone=False, v4=False)
+        update_dns_option(
+            "IPv6 block level", _v6_b1, srv=dns_hm_id, zone=False, v4=False
+        )
+
         parent = _b1
         nets = {"10.0.0.0/8": _b1}
         for idx, b in enumerate(["10.0.0.0/10", "10.0.0.0/16", "10.0.0.0/17"]):
             substage("Adding %s block" % b)
             parent = v.connection.add_block(parent, b)
-            v.connection.add_dns_deployment_option(
-                parent, "allow-notify", None, "0.0.0.%d/32" % idx
+
+            update_dns_option("IPv4 block '%s'" % b, parent, zone=False, v6=False)
+            update_dns_option(
+                "IPv4 block '%s'" % b, parent, srv=dns_hm_id, zone=False, v6=False
             )
-            print(
-                v.connection.get_dns_option(_n1, "allow-notify", servers[dns_hm]["id"])
-            )
+
             nets[b] = parent
             v.deploy_servers([dns_hm], True)
             substage("Checking delegation from 10.0.0.0/8 to 10.0.0.0/24")
@@ -325,10 +409,12 @@ try:
         stage("Swapping DNS roles at documentation blocks to dummy")
         for b in ["10.0.0.0/10", "10.0.0.0/17"]:
             print("Removing DNS role at %s" % b, dns_roles[b])
-            print(v.connection.get_entity_by_id(dns_roles[b]))
+            if debug:
+                print(v.connection.get_entity_by_id(dns_roles[b]))
             v.connection.delete_dns_deployment_role(nets[b], dns_hm_iface)
             try:
-                print(v.connection.get_entity_by_id(dns_roles[b]))
+                if debug:
+                    print(v.connection.get_entity_by_id(dns_roles[b]))
             except IpamAPIError:
                 greenprint("No such role")
             print("Adding new DNS role at %s" % b)

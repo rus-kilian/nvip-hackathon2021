@@ -363,6 +363,9 @@ class IpamAPI:
         )
 
     def add_dns_deployment_option(self, entityId, name, properties, value, **kwargs):
+        if debug:
+            print("+++ Adding DNS deployment option to entity:")
+            print(self.get_entity_by_id(entityId))
         payload = json_to_entity(
             {
                 "entityId": entityId,
@@ -499,15 +502,18 @@ class IpamAPI:
                 break
 
     def get_dns_option(self, entityId, name, serverId=0, **kwargs):
+        if debug:
+            print(
+                "Fetching DNS Option %s at %d for server %d"
+                % (name, int(entityId), int(serverId))
+            )
         _res = self.raw_get_json(
             "getDNSDeploymentOption",
             params={"entityId": entityId, "name": name, "serverId": serverId},
             **kwargs
         )
         if _res:
-            if _res["id"] == 0:
-                return None
-            return [decode_properties(r) for r in _res]
+            return _res.get("value", None)
 
     def get_server_roles(self, serverId, **kwargs):
         return [
@@ -783,20 +789,45 @@ class IpamGenericCache:
     def generic_get_dns_option(self, entityId, name, serverId):
         if name not in self._generic_cache_dns_options:
             self._generic_cache_dns_options[name] = {}
-        for s in [serverId, 0]:
+        servers = [0]
+        if int(serverId) > 0:
+            servers = [serverId, 0]
+        for s in servers:
             if s not in self._generic_cache_dns_options[name]:
                 self._generic_cache_dns_options[name][s] = {}
             if entityId in self._generic_cache_dns_options[name][s]:
+                if debug:
+                    print(
+                        "Cache hit for DNS option %s on %d for srv %d"
+                        % (name, int(entityId), int(s))
+                    )
                 return self._generic_cache_dns_options[name][s][entityId]
         if "default" in self._generic_cache_dns_options[name][serverId]:
+            if debug:
+                print(
+                    "Default server option Cache hit for DNS option %s on %d for srv %d"
+                    % (name, int(entityId), int(serverId))
+                )
             return self._generic_cache_dns_options[name][serverId]["default"]
         # no cache hit - actually fetch DNS options
-        for s in [serverId, 0]:
+        for s in servers:
             _res = self._conn.get_dns_option(entityId, name, s)
             if _res is not None:
+                if debug:
+                    print(
+                        "Lookup complete for DNS option %s on %d for %d"
+                        % (name, int(entityId), int(serverId)),
+                        _res,
+                    )
                 self._generic_cache_dns_options[name][serverId][entityId] = _res
                 return _res
         # default to server options or None
+        if debug:
+            print(
+                "Lookup complete for server default DNS option %s on %d"
+                % (name, int(serverId)),
+                _res,
+            )
         _res = self._conn.get_dns_option(serverId, name, serverId)
         self._generic_cache_dns_options[name][serverId]["default"] = _res
         return _res
@@ -1033,7 +1064,16 @@ class IpamUS(IpamGenericCache, IpamAPI):
             serverInterfaceId,
         )
 
-    def add_dns_deployment_option(self, entityId, name, properties, value):
+    def add_dns_deployment_option(
+        self, entityId, name, value, properties=None, server=None, serverGroup=None
+    ):
+        if server or serverGroup:
+            if not properties:
+                properties = {}
+            if server:
+                properties["server"] = server
+            if serverGroup:
+                properties["serverGroup"] = server
         return self._conn.add_dns_deployment_option(entityId, name, properties, value)
 
     def disable_server(self, id):
