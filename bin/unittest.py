@@ -16,7 +16,15 @@ from tools.toolbox import (
     substage,
     title,
 )
-from tools.toolbox.internals import redprint, greenprint, statusprint
+from tools.toolbox.internals import (
+    redprint,
+    greenprint,
+    yellowprint,
+    statusprint,
+    red,
+    blue,
+    yellow,
+)
 from tools.vmware import (
     get_all_vm_snapshots,
     revert_to_snapshot,
@@ -68,8 +76,26 @@ OPTIONS = [
 ]
 
 
+def result(valid, check="", value=""):
+    statusprint()
+    if valid:
+        greenprint("VALID", prefix="[", suffix="] ", end="")
+    else:
+        redprint("FAILED", prefix="[", suffix="] ", end="")
+    print(check.strip(), end="")
+    if value:
+        print(": ", end="")
+    if valid:
+        greenprint(value)
+    else:
+        redprint(value)
+
+
 def show_delegation(base, target, ns):
-    print("Checking for delegation from %s to %s on %s" % (base, target, ns))
+    print(
+        "Checking for delegation from %s to %s on %s"
+        % (blue(base), blue(target), yellow(ns))
+    )
     statusprint("Fetching zone %s via AXFR" % base)
     zone_axfr = dns.query.xfr(ns, base)
     z1 = dns.zone.from_xfr(zone_axfr)
@@ -80,25 +106,24 @@ def show_delegation(base, target, ns):
         if debug:
             print(delegation)
     except KeyError:
-        statusprint()
-        redprint("No delegation from %s to %s" % (base, target))
+        result(False, "No delegation from '%s' to '%s'" % (red(base), red(target)))
         print(z1.to_text())
+        return
 
     z2 = dns.zone.from_xfr(dns.query.xfr(ns, target))
     soa = z2.find_rdataset("@", "SOA")
     if debug:
         print(soa)
-    statusprint("Delegation matches for: ")
-    greenprint(target)
+    result(True, "Delegation matches for", target)
 
 
 def get_children(conn, servers, entityId, type=None):
     # FIXME: this should actually come through a Class servers cache
     # global servers
-    result = {}
+    _result = {}
     for t in servers:
         # init target zones list per server
-        result[t] = {}
+        _result[t] = {}
         # get zone options
         for opt in OPTIONS:
             # next, let's get all the current entity DNS options
@@ -132,7 +157,7 @@ def get_children(conn, servers, entityId, type=None):
             # add overrides for dereferenced zones of CIDR
             # append add to r where not overridden
             # add r to children
-    return result
+    return _result
 
 
 bam_ova = find_ova("bam_")
@@ -170,7 +195,7 @@ try:
         # we now have a Configuration and a View
         v.bootstrap_ipam_config()
 
-        print("Fetching servers")
+        statusprint("Fetching servers")
         servers = v.get_all_servers()
         if servers:
             abort("Invalid starting point")
@@ -184,6 +209,8 @@ try:
         }
         if "ip6addr" in _bdds:
             payload[_bdds["name"]]["ipv6"] = _bdds["ip6addr"]
+        statusprint()
+
         stage("Adding servers")
         v.add_servers(payload)
         v.deploy_servers([dns_hm], True)
@@ -245,20 +272,20 @@ try:
 
         stage("Bootstrapping minimal IPv6 block/network")
         _v6_root = v.connection.find_network("2000::/3")["id"]
-        substage("Adding 2001:7c0:2000::/40 block")
+        substage("Adding 2001:db8::/32 block")
         _v6_b1 = v.connection.add_block(
             _v6_root,
-            "2001:7c0:2000::/40",
+            "2001:db8::/32",
         )
         v.connection.add_dns_deployment_option(_v6_b1, "allow-xfer", "0.0.0.0/0")
-        substage("Adding DNS MASTER to 2001:7c0:2000::/40 block")
+        substage("Adding DNS MASTER to 2001:db8::/32 block")
         v.connection.add_dns_deployment_role(
             _v6_b1, dns_hm_iface, "MASTER", {"view": viewid}
         )
-        substage("Adding 2001:7c0:2000:1000::/64 network")
+        substage("Adding 2001:db8:0:1::/64 network")
         _v6_n1 = v.connection.add_network(
             _v6_b1,
-            "2001:7c0:2000:1000::/64",
+            "2001:db8:0:1::/64",
         )
         v.connection.add_dns_deployment_role(
             _v6_n1, dns_hm_iface, "MASTER", {"view": viewid}
@@ -275,10 +302,10 @@ try:
             network_zone_name("10.0.0.0/24"),
             payload[_bdds["name"]]["ipv4"],
         )
-        substage("...from 2001:7c0:2000::/40 to 2001:7c0:2000:1000::/64")
+        substage("...from 2001:db8::/32 to 2001:db8:0:1::/64")
         show_delegation(
-            network_zone_name("2001:7c0:2000::/40"),
-            network_zone_name("2001:7c0:2000:1000::/64"),
+            network_zone_name("2001:db8::/32"),
+            network_zone_name("2001:db8:0:1::/64"),
             payload[_bdds["name"]]["ipv4"],
         )
         # FIXME: verify DS delegation to 10/24 on 10/18
@@ -286,40 +313,29 @@ try:
         stage("Adding deployment options to zones and comparing results")
 
         def verify_current_dns_options(ip, zone=True, v4=True, v6=True):
+            yellowprint(ip, prefix="Expecting: ")
             v.connection.clear_cache()
+
             res = str(v.connection.get_dns_option(_z3, "allow-notify", dns_hm_id))
-            if res == ip:
-                greenprint(
-                    res,
-                    prefix="[VALID] Current DNS options at 'dnssec.lab.bluecat': ",
-                )
-            else:
-                redprint(
-                    res,
-                    prefix="[FAILED] Current DNS options at 'dnssec.lab.bluecat': ",
-                )
+            result(
+                (res == ip),
+                "Current DNS options at '%s'" % blue("dnssec.lab.bluecat"),
+                res,
+            )
+
             res = str(v.connection.get_dns_option(_n1, "allow-notify", dns_hm_id))
-            if res == ip:
-                greenprint(
-                    res,
-                    prefix="[VALID] Current DNS options at '10.0.0.0/24': ",
-                )
-            else:
-                redprint(
-                    res,
-                    prefix="[FAILED] Current DNS options at '10.0.0.0/24': ",
-                )
+            result(
+                (res == ip),
+                "Current DNS options at '%s'" % blue("10.0.0.0/24"),
+                res,
+            )
+
             res = str(v.connection.get_dns_option(_v6_n1, "allow-notify", dns_hm_id))
-            if res == ip:
-                greenprint(
-                    res,
-                    prefix="[VALID] Current DNS options at '2001:7c0:2000:1000::/64': ",
-                )
-            else:
-                redprint(
-                    res,
-                    prefix="[FAILED] Current DNS options at '2001:7c0:2000:1000::/64': ",
-                )
+            result(
+                (res == ip),
+                "Current DNS options at '%s'" % blue("2001:db8:0:1::/64"),
+                res,
+            )
 
         substage("Starting baseline")
         verify_current_dns_options("None")
@@ -330,15 +346,12 @@ try:
             global voidip
             _ip = "%s/32" % str(voidip)
             if not srv:
-                substage("Adding %s DNS option (all servers): %s" % (level, _ip))
-                v.connection.add_dns_deployment_option(entityid, "allow-notify", _ip)
+                substage("Adding %s DNS option (all servers)" % level)
             else:
-                substage(
-                    "Adding %s DNS option (this server only): %s" % (level, str(voidip))
-                )
-                v.connection.add_dns_deployment_option(
-                    entityid, "allow-notify", _ip, server=srv
-                )
+                substage("Adding %s DNS option (this server only)" % level)
+            v.connection.add_dns_deployment_option(
+                entityid, "allow-notify", _ip, server=srv
+            )
             verify_current_dns_options(_ip, zone, v4, v6)
             voidip += 1
 
@@ -390,7 +403,7 @@ try:
             )
         dns_roles = {}
         for b in ["10.0.0.0/10", "10.0.0.0/16", "10.0.0.0/17"]:
-            substage("Adding DNS role to %s" % b)
+            substage("Adding DNS role for BDDS to %s" % b)
             dns_roles[b] = v.connection.add_dns_deployment_role(
                 nets[b], dns_hm_iface, "MASTER", {"view": viewid}
             )
@@ -404,11 +417,15 @@ try:
                     payload[_bdds["name"]]["ipv4"],
                 )
             except KeyError:
-                redprint("FAILED! No valid delegation!")
+                result(
+                    False,
+                    "No valid delegation from " + red("10.0.0.0/16") + " to",
+                    "10.0.0.0/24",
+                )
 
         stage("Swapping DNS roles at documentation blocks to dummy")
         for b in ["10.0.0.0/10", "10.0.0.0/17"]:
-            print("Removing DNS role at %s" % b, dns_roles[b])
+            substage("Removing existing BDDS DNS role at %s" % b)
             if debug:
                 print(v.connection.get_entity_by_id(dns_roles[b]))
             v.connection.delete_dns_deployment_role(nets[b], dns_hm_iface)
@@ -417,25 +434,30 @@ try:
                     print(v.connection.get_entity_by_id(dns_roles[b]))
             except IpamAPIError:
                 greenprint("No such role")
-            print("Adding new DNS role at %s" % b)
+
+            substage("Adding new DNS role to 'dummy' at %s" % b)
             dns_roles[b] = v.connection.add_dns_deployment_role(
                 nets[b], dummy_iface, "MASTER", {"view": viewid}
             )
             print("New DNS master role at %s is:" % b, dns_roles[b])
 
-        v.deploy_servers([dns_hm], True)
+            v.deploy_servers([dns_hm], True)
 
-        stage("Verifying delegations at DNS level")
-        for f, to in [("10.0.0.0/8", "10.0.0.0/16"), ("10.0.0.0/16", "10.0.0.0/24")]:
-            substage("Checking delegation from %s to %s" % (f, to))
-            try:
-                show_delegation(
-                    network_zone_name(f),
-                    network_zone_name(to),
-                    payload[_bdds["name"]]["ipv4"],
-                )
-            except KeyError:
-                redprint("FAILED! No valid delegation!")
+            yellowprint("DNS roles at byte boundary are still pointing to BDDS!")
+
+            for f, to in [
+                ("10.0.0.0/8", "10.0.0.0/16"),
+                ("10.0.0.0/16", "10.0.0.0/24"),
+            ]:
+                substage("Checking delegation from %s to %s" % (f, to))
+                try:
+                    show_delegation(
+                        network_zone_name(f),
+                        network_zone_name(to),
+                        payload[_bdds["name"]]["ipv4"],
+                    )
+                except KeyError:
+                    result(False, "No valid delegation from " + red(f) + " to", to)
 
         # FIXME: add DNSSEC config to "10/10"
         # FIXME: verify DS delegation to 10/24 on 10/8

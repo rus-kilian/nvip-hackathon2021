@@ -8,24 +8,44 @@ from colorama.ansi import clear_line
 from multiprocessing import Process, Pipe
 
 
-def colorprint(fgcolor, text, end="\n", prefix=""):
-    print(prefix + fgcolor + text + Style.RESET_ALL, end=end)
+def colorprint(fgcolor, text, end="\n", prefix="", suffix=""):
+    print(prefix + fgcolor + text + Style.RESET_ALL + suffix, end=end)
 
 
-def redprint(text, end="\n", prefix=""):
-    colorprint(Fore.RED, text, end=end, prefix=prefix)
+def red(text):
+    return Fore.RED + text + Style.RESET_ALL
 
 
-def greenprint(text, end="\n", prefix=""):
-    colorprint(Fore.GREEN, text, end=end, prefix=prefix)
+def green(text):
+    return Fore.GREEN + text + Style.RESET_ALL
 
 
-def yellowprint(text, end="\n", prefix=""):
-    colorprint(Style.BRIGHT + Fore.YELLOW, text, end=end, prefix=prefix)
+def yellow(text):
+    return Style.BRIGHT + Fore.YELLOW + text + Style.RESET_ALL
 
 
-def blueprint(text, end="\n", prefix=""):
-    colorprint(Fore.CYAN, text, end=end, prefix=prefix)
+def blue(text):
+    return Fore.CYAN + text + Style.RESET_ALL
+
+
+def redprint(text, end="\n", prefix="", suffix=""):
+    colorprint(Fore.RED, text, end=end, prefix=prefix, suffix=suffix)
+
+
+def greenprint(text, end="\n", prefix="", suffix=""):
+    colorprint(Fore.GREEN, text, end=end, prefix=prefix, suffix=suffix)
+
+
+def yellowprint(text, end="\n", prefix="", suffix=""):
+    colorprint(Style.BRIGHT + Fore.YELLOW, text, end=end, prefix=prefix, suffix=suffix)
+
+
+def whiteprint(text, end="\n", prefix="", suffix=""):
+    colorprint(Style.BRIGHT + Fore.WHITE, text, end=end, prefix=prefix, suffix=suffix)
+
+
+def blueprint(text, end="\n", prefix="", suffix=""):
+    colorprint(Fore.CYAN, text, end=end, prefix=prefix, suffix=suffix)
 
 
 def statusprint(text=""):
