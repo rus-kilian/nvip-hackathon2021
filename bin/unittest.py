@@ -15,6 +15,7 @@ from tools.toolbox import (
     stage,
     substage,
     title,
+    centerprint,
 )
 from tools.toolbox.internals import (
     redprint,
@@ -219,11 +220,8 @@ try:
         servers = v.get_all_servers()
         dns_hm_id = servers[dns_hm]["id"]
         dns_hm_iface = v.connection.get_server_interface(dns_hm_id)
-        dummy_iface = v.connection.get_server_interface(servers["dummy"]["id"])
-
-        v.connection.add_dns_deployment_option(
-            servers["dummy"]["id"], "allow-notify", "2.0.0.0/32"
-        )
+        dummy_id = servers["dummy"]["id"]
+        dummy_iface = v.connection.get_server_interface(dummy_id)
 
         stage("Adding zones")
         viewid = v.connection.get_extern_view_id()
@@ -266,6 +264,7 @@ try:
         )
         substage("Adding 10.0.0.0/24 network")
         _n1 = v.connection.add_network(_b1, "10.0.0.0/24")
+        substage("Adding DNS MASTER to 10/24 network")
         v.connection.add_dns_deployment_role(
             _n1, dns_hm_iface, "MASTER", {"view": viewid}
         )
@@ -305,6 +304,123 @@ try:
 
         v.deploy_servers([dns_hm], True)
 
+        def listprint(level=0, lable=None, value="", objid=None):
+            if objid:
+                print("[%06d] " % int(objid), end="")
+            else:
+                print(" " * 9, end="")
+            if level > 0:
+                print(" " * 2 * (level - 1) + "+ ", end="")
+            if lable:
+                print(lable, end=": ")
+            print(value)
+
+        def print_dns_options(parent, level):
+            for opt in ["allow-xfer", "allow-notify"]:
+                _srvopt = v.connection._conn.get_dns_option(parent, opt, dns_hm_id)
+                if _srvopt:
+                    listprint(level + 1, opt + " (%s)" % dns_hm, str(_srvopt))
+                _srvopt = v.connection._conn.get_dns_option(parent, opt, dummy_id)
+                if _srvopt:
+                    listprint(level + 1, opt + " (dummy)", str(_srvopt))
+                _srvopt = v.connection._conn.get_dns_option(parent, opt, 0)
+                if _srvopt:
+                    listprint(level + 1, opt + " (all Servers)", str(_srvopt))
+
+        def print_dns_roles(parent, level):
+            _roles = v.connection.get_deployment_roles(parent)
+            if _roles:
+                listprint(level, "DNS roles")
+                for r in _roles:
+                    _type = r["type"]
+                    if r["properties"].get("inherited") == "true":
+                        _type += " (INHERITED)"
+                    if r["serverInterfaceId"] == dummy_iface:
+                        listprint(level + 1, _type, "dummy", r["id"])
+                    elif r["serverInterfaceId"] == dns_hm_iface:
+                        listprint(level + 1, _type, dns_hm, r["id"])
+                    else:
+                        listprint(level + 1, _type, r["serverInterfaceId"])
+
+        def print_zones(parent, level):
+            listprint(level, "Zone", parent["name"], parent["id"])
+            print_dns_options(parent["id"], level + 1)
+            print_dns_roles(parent["id"], level + 1)
+            _zones = v.connection.get_entities(parent["id"], "Zone")
+            if _zones:
+                for _zone in _zones:
+                    print_zones(_zone, level + 1)
+
+        def print_subnets(parent, level, v6=True, v4=True):
+            entities = []
+            if v6:
+                entities += ["IP6Block", "IP6Network"]
+            if v4:
+                entities += ["IP4Block", "IP4Network"]
+            for _t in entities:
+                subnets = v.connection.get_entities(parent, _t)
+                if subnets:
+                    for _s in subnets:
+                        # FIXME: just ignore non-CIDR IPv6 / IPv4 subnets here...
+                        cidr_key = "prefix"
+                        if _t[:3] == "IP4":
+                            cidr_key = "CIDR"
+                        try:
+                            listprint(
+                                level,
+                                _t,
+                                "%s (%s)"
+                                % (_s["properties"][cidr_key], _s.get("name", "None")),
+                                _s["id"],
+                            )
+                        except KeyError:
+                            print(_s)
+                            abort("KeyError")
+                        print_dns_options(_s["id"], level + 1)
+                        print_dns_roles(_s["id"], level + 1)
+                        if _t[-5:] == "Block":
+                            print_subnets(
+                                _s["id"], level + 1, _t[:3] == "IP6", _t[:3] == "IP4"
+                            )
+
+        def print_tree():
+            centerprint("Current objects in BAM")
+            listprint(
+                0,
+                "Configuration",
+                v.connection.CONFIGURATION,
+                v.connection._configuration_id,
+            )
+            print_dns_roles(v.connection._configuration_id, 1)
+
+            listprint(1, "View", v.connection.EXTERN_VIEW, viewid)
+            print_dns_roles(viewid, 2)
+
+            listprint(1, "Servers")
+            servers = v.get_all_servers()
+            for srv in servers:
+                srvid = servers[srv]["id"]
+                listprint(2, value=srv, objid=int(srvid))
+                for opt in ["allow-xfer", "allow-notify"]:
+                    _srvopt = v.connection.get_dns_option(srvid, opt, srvid)
+                    if _srvopt:
+                        listprint(3, opt, str(_srvopt))
+                roles = v.connection.get_server_roles(srvid)
+                if roles:
+                    listprint(3, "Roles")
+                    for r in roles:
+                        listprint(4, r["type"], r["entityId"], r["id"])
+
+            listprint(1, "Zones")
+            for _z in v.connection.get_entities(viewid, "Zone"):
+                print_zones(_z, 2)
+
+            listprint(1, "Subnets")
+            print_subnets(v.connection._configuration_id, 2)
+
+            centerprint("END: Current objects in BAM")
+
+        print_tree()
         stage("Checking delegations")
         substage("...from 10/8 to 10/24")
         show_delegation(
@@ -376,7 +492,8 @@ try:
             "Configuration level", v.connection._configuration_id, srv=dns_hm_id
         )
 
-        update_dns_option("Server level", dns_hm_id)
+        update_dns_option("Server level: %s" % dns_hm, dns_hm_id)
+        update_dns_option("Server level: dummy", dummy_id)
 
         update_dns_option("View level", viewid)
         update_dns_option("View level", viewid, srv=dns_hm_id)
@@ -397,6 +514,7 @@ try:
         update_dns_option(
             "IPv6 block level", _v6_b1, srv=dns_hm_id, zone=False, v4=False
         )
+        print_tree()
 
         parent = _b1
         nets = {"10.0.0.0/8": _b1}
@@ -418,6 +536,7 @@ try:
                 payload[_bdds["name"]]["ipv4"],
             )
         dns_roles = {}
+        print_tree()
         for b in ["10.0.0.0/10", "10.0.0.0/16", "10.0.0.0/17"]:
             substage("Adding DNS role for BDDS to %s" % b)
             dns_roles[b] = v.connection.add_dns_deployment_role(
@@ -425,20 +544,21 @@ try:
             )
             print("New DNS master role at %s is:" % b, dns_roles[b])
             v.deploy_servers([dns_hm], True)
-            substage("Checking delegation from 10.0.0.0/16 to 10.0.0.0/24")
-            try:
-                show_delegation(
-                    network_zone_name("10.0.0.0/16"),
-                    network_zone_name("10.0.0.0/24"),
-                    payload[_bdds["name"]]["ipv4"],
-                )
-            except KeyError:
-                result(
-                    False,
-                    "No valid delegation from " + red("10.0.0.0/16") + " to",
-                    "10.0.0.0/24",
-                )
+            for f, to in [
+                ("10.0.0.0/8", "10.0.0.0/16"),
+                ("10.0.0.0/16", "10.0.0.0/24"),
+            ]:
+                substage("Checking delegation from %s to %s" % (f, to))
+                try:
+                    show_delegation(
+                        network_zone_name(f),
+                        network_zone_name(to),
+                        payload[_bdds["name"]]["ipv4"],
+                    )
+                except KeyError:
+                    result(False, "No valid delegation from " + red(f) + " to", to)
 
+        print_tree()
         stage("Swapping DNS roles at documentation blocks to dummy")
         for b in ["10.0.0.0/10", "10.0.0.0/17"]:
             substage("Removing existing BDDS DNS role at %s" % b)
@@ -515,6 +635,7 @@ try:
                     "2001:db8::/36",
                 )
 
+            print_tree()
             stage("Swapping DNS roles to dummy")
             substage("Removing existing BDDS DNS role at %s" % b)
             if debug:

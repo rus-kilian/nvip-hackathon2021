@@ -1064,6 +1064,14 @@ class IpamUS(IpamGenericCache, IpamAPI):
             serverInterfaceId,
         )
 
+    def get_deployment_roles(
+        self,
+        entityId,
+    ):
+        return self._conn.get_deployment_role(
+            entityId,
+        )
+
     def add_dns_deployment_option(
         self, entityId, name, value, properties=None, server=None, serverGroup=None
     ):
