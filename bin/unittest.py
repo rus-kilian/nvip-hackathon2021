@@ -282,9 +282,19 @@ try:
         v.connection.add_dns_deployment_role(
             _v6_b1, dns_hm_iface, "MASTER", {"view": viewid}
         )
+        substage("Adding 2001:db8::/36 block")
+        _v6_b2 = v.connection.add_block(
+            _v6_b1,
+            "2001:db8::/36",
+        )
+        v.connection.add_dns_deployment_option(_v6_b2, "allow-xfer", "0.0.0.0/0")
+        substage("Adding DNS MASTER to 2001:db8::/36 block")
+        v.connection.add_dns_deployment_role(
+            _v6_b2, dns_hm_iface, "MASTER", {"view": viewid}
+        )
         substage("Adding 2001:db8:0:1::/64 network")
         _v6_n1 = v.connection.add_network(
-            _v6_b1,
+            _v6_b2,
             "2001:db8:0:1::/64",
         )
         v.connection.add_dns_deployment_role(
@@ -302,9 +312,15 @@ try:
             network_zone_name("10.0.0.0/24"),
             payload[_bdds["name"]]["ipv4"],
         )
-        substage("...from 2001:db8::/32 to 2001:db8:0:1::/64")
+        substage("...from 2001:db8::/32 to 2001:db8::/36")
         show_delegation(
             network_zone_name("2001:db8::/32"),
+            network_zone_name("2001:db8::/36"),
+            payload[_bdds["name"]]["ipv4"],
+        )
+        substage("...from 2001:db8::/36 to 2001:db8:0:1::/64")
+        show_delegation(
+            network_zone_name("2001:db8::/36"),
             network_zone_name("2001:db8:0:1::/64"),
             payload[_bdds["name"]]["ipv4"],
         )
@@ -384,7 +400,7 @@ try:
 
         parent = _b1
         nets = {"10.0.0.0/8": _b1}
-        for idx, b in enumerate(["10.0.0.0/10", "10.0.0.0/16", "10.0.0.0/17"]):
+        for b in ["10.0.0.0/10", "10.0.0.0/16", "10.0.0.0/17"]:
             substage("Adding %s block" % b)
             parent = v.connection.add_block(parent, b)
 
@@ -448,6 +464,80 @@ try:
             for f, to in [
                 ("10.0.0.0/8", "10.0.0.0/16"),
                 ("10.0.0.0/16", "10.0.0.0/24"),
+            ]:
+                substage("Checking delegation from %s to %s" % (f, to))
+                try:
+                    show_delegation(
+                        network_zone_name(f),
+                        network_zone_name(to),
+                        payload[_bdds["name"]]["ipv4"],
+                    )
+                except KeyError:
+                    result(False, "No valid delegation from " + red(f) + " to", to)
+
+        stage("Adding IPv6 block misaligned to nibble boundary")
+        parent = _v6_b1
+        for b in ["2001:db8::/33"]:
+            substage("Adding %s block" % b)
+            parent = v.connection.add_block(parent, b)
+
+            update_dns_option("IPv6 block '%s'" % b, parent, zone=False, v4=False)
+            update_dns_option(
+                "IPv6 block '%s'" % b, parent, srv=dns_hm_id, zone=False, v4=False
+            )
+
+            nets[b] = parent
+            v.deploy_servers([dns_hm], True)
+            substage("Checking delegation from 2001:db8::/32 to 2001:db8::/36")
+            show_delegation(
+                network_zone_name("2001:db8::/32"),
+                network_zone_name("2001:db8::/36"),
+                payload[_bdds["name"]]["ipv4"],
+            )
+
+            substage("Adding DNS role for BDDS to %s" % b)
+            dns_roles[b] = v.connection.add_dns_deployment_role(
+                nets[b], dns_hm_iface, "MASTER", {"view": viewid}
+            )
+            print("New DNS master role at %s is:" % b, dns_roles[b])
+            v.deploy_servers([dns_hm], True)
+            substage("Checking delegation from 2001:db8::/32 to 2001:db8::/36")
+            try:
+                show_delegation(
+                    network_zone_name("2001:db8::/32"),
+                    network_zone_name("2001:db8::/36"),
+                    payload[_bdds["name"]]["ipv4"],
+                )
+            except KeyError:
+                result(
+                    False,
+                    "No valid delegation from " + red("2001:db8::/32") + " to",
+                    "2001:db8::/36",
+                )
+
+            stage("Swapping DNS roles to dummy")
+            substage("Removing existing BDDS DNS role at %s" % b)
+            if debug:
+                print(v.connection.get_entity_by_id(dns_roles[b]))
+            v.connection.delete_dns_deployment_role(nets[b], dns_hm_iface)
+            try:
+                if debug:
+                    print(v.connection.get_entity_by_id(dns_roles[b]))
+            except IpamAPIError:
+                greenprint("No such role")
+
+            substage("Adding new DNS role to 'dummy' at %s" % b)
+            dns_roles[b] = v.connection.add_dns_deployment_role(
+                nets[b], dummy_iface, "MASTER", {"view": viewid}
+            )
+            print("New DNS master role at %s is:" % b, dns_roles[b])
+
+            v.deploy_servers([dns_hm], True)
+
+            yellowprint("DNS roles at byte boundary are still pointing to BDDS!")
+
+            for f, to in [
+                ("2001:db8::/32", "2001:db8::/36"),
             ]:
                 substage("Checking delegation from %s to %s" % (f, to))
                 try:
