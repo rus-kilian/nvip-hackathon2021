@@ -113,8 +113,11 @@ def extract_updates(prefix, dirs=["updates", "patches"]):
     updates = []
     for _d in dirs:
         if os.path.exists(_d):
-            files = os.listdir(_d)
-            for f in files:
+            files = sorted(os.scandir(_d), key=lambda d: d.stat().st_mtime)
+            if not files:
+                continue
+            for _file in files:
+                f = _file.name
                 if f.startswith(prefix):
                     statusprint(
                         "Examining update file %s" % Fore.YELLOW
