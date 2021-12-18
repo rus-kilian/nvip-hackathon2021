@@ -571,24 +571,55 @@ class IpamConnection(IpamAPI):
         self._session = requests.Session()
         self._log_requests = config.get("log_requests", False)
         if self._log_requests:
-
-            def logging_hook(response, *args, **kwargs):
-                print(f"\n>{response.request.method}> {response.url}")
-                try:
-                    _json = json.loads(response.text)
-                    # pretty print JSON
-                    if isinstance(_json, dict) or isinstance(_json, list):
-                        print(f"<{response.status_code}< [JSON object]")
-                        print(json.dumps(_json, indent=2))
-                        print(f"<{response.status_code}< [END:JSON object]")
-                    else:
-                        print(f"<{response.status_code}< {response.text}")
-                except ValueError:
-                    print(f"<{response.status_code}< {response.text}")
-                    print()
-
-            self._session.hooks["response"] = [logging_hook]
+            self._enable_logging()
         self._login()
+
+    def enable_logging(self):
+        def logging_hook(response, *args, **kwargs):
+            print(f"\n>{response.request.method}> {response.url}")
+            if response.request.body:
+                if isinstance(response.request.body, str):
+                    try:
+                        _json = json.loads(response.request.body)
+                        if isinstance(_json, dict) or isinstance(_json, list):
+                            print(f">{response.request.method}> [JSON object]")
+                            print(json.dumps(_json, indent=2))
+                            print(f">{response.request.method}> [END:JSON object]")
+                        else:
+                            print(
+                                f">{response.request.method}> {response.request.body}"
+                            )
+                    except ValueError:
+                        print(f">{response.request.method}> {response.request.body}")
+                else:
+                    print(
+                        f">{response.request.method}> <<%d bytes>>"
+                        % len(response.request.body)
+                    )
+            try:
+                _json = json.loads(response.text)
+                # pretty print JSON
+                if isinstance(_json, dict) or isinstance(_json, list):
+                    print(f"<{response.status_code}< [JSON object]")
+                    print(json.dumps(_json, indent=2))
+                    print(f"<{response.status_code}< [END:JSON object]")
+                else:
+                    print(f"<{response.status_code}< {response.text}")
+            except ValueError:
+                print(f"<{response.status_code}< {response.text}")
+                print()
+
+        print("Logging enabled.")
+        self._session.hooks["response"] = [logging_hook]
+        self._log_requests = True
+
+    def disable_logging(self):
+        print("Logging disabled.")
+        self._session.hooks = {}
+        self._log_requests = False
+
+    def logging_enabled(self):
+        return self._log_requests
 
     def _get(self, path, *args, **kwargs):
         debug = kwargs.get("debug", False)

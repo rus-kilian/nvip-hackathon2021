@@ -288,6 +288,20 @@ class VMPreparer:
     def get_current_snapshot(self):
         return self.snapshot_restored
 
+    def get_log_requests(self):
+        if not self.connection:
+            return
+        return self.connection.logging_enabled()
+
+    def set_log_requests(self, log_requests=False):
+        if not self.ipam_config:
+            return self.update_ipam_config(log_requests=log_requests)
+        self.ipam_config["log_requests"] = log_requests
+        if log_requests is True:
+            self.connection._conn.enable_logging()
+        else:
+            self.connection._conn.disable_logging()
+
     def update_ipam_config(
         self, username=None, password=None, log_requests=False
     ):  # nosec: B107
@@ -308,6 +322,11 @@ class VMPreparer:
         self.ipam_config["username"] = username
         self.ipam_config["password"] = password
         self.ipam_config["log_requests"] = log_requests
+        if self.connection:
+            if log_requests is True:
+                self.connection._conn.enable_logging()
+            else:
+                self.connection._conn.disable_logging()
         print(clear_line() + "\r", end="")
 
     def tailf(self, vmu, running):

@@ -191,7 +191,7 @@ try:
             abort("VM %s has no snapshots!" % dns_hm)
         revert_to_snapshot(v.si, v.vms[dns_hm], snapshots[0])
 
-        v.update_ipam_config("admin", config["bam_password"], True)
+        v.update_ipam_config("admin", config["bam_password"])
 
         # we now have a Configuration and a View
         v.bootstrap_ipam_config()
@@ -447,6 +447,7 @@ try:
         def verify_current_dns_options(ip, zone=True, v4=True, v6=True):
             yellowprint(ip, prefix="Expecting: ")
             v.connection.clear_cache()
+            v.set_log_requests(True)
 
             res = str(v.connection.get_dns_option(_z3, "allow-notify", dns_hm_id))
             result(
@@ -468,6 +469,7 @@ try:
                 "Current DNS options at '%s'" % blue("2001:db8:0:1::/64"),
                 res,
             )
+            v.set_log_requests(False)
 
         substage("Starting baseline")
         verify_current_dns_options("None")
