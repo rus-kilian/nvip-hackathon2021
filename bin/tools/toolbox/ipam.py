@@ -195,6 +195,7 @@ class Ipam:
 
         self._config = config
         self._connection = None
+        self._log_requests = config.get("log_requests", False)
 
     def __enter__(self):
         if self._connection is not None:
@@ -259,7 +260,7 @@ class IpamAPI:
             "addEntity",
             data=json.dumps(entity),
             params=json_to_entity(payload),
-            **kwargs
+            **kwargs,
         )
 
     def add_zone(self, absoluteName, parentId, deployable=True, **kwargs):
@@ -388,7 +389,7 @@ class IpamAPI:
             "updateWithOptions",
             params="options=disable=true",
             json=json_to_entity(entity),
-            **kwargs
+            **kwargs,
         )
 
     def enable_server(self, id, **kwargs):  # pylint: disable=W0622
@@ -397,7 +398,7 @@ class IpamAPI:
             "updateWithOptions",
             params="options=disable=false",
             json=json_to_entity(entity),
-            **kwargs
+            **kwargs,
         )
 
     def delete_entity(self, id, **kwargs):  # pylint: disable=W0622
@@ -414,7 +415,7 @@ class IpamAPI:
         res = self._get_rest(
             "getServerDeploymentStatus",
             params=json_to_entity({"serverId": id}),
-            **kwargs
+            **kwargs,
         )
         if res.status_code != 200:
             return "UNKNOWN"
@@ -431,7 +432,7 @@ class IpamAPI:
             "migrateFile",
             data={},
             params=json_to_entity({"filename": xmlfile}),
-            **kwargs
+            **kwargs,
         )
 
     def get_entity_by_name(
@@ -445,7 +446,7 @@ class IpamAPI:
                     "name": name,
                     "type": type,
                 },
-                **kwargs
+                **kwargs,
             )
         )
 
@@ -456,7 +457,7 @@ class IpamAPI:
                 params={
                     "id": id,
                 },
-                **kwargs
+                **kwargs,
             )
         )
 
@@ -510,7 +511,7 @@ class IpamAPI:
         _res = self.raw_get_json(
             "getDNSDeploymentOption",
             params={"entityId": entityId, "name": name, "serverId": serverId},
-            **kwargs
+            **kwargs,
         )
         if _res:
             return _res.get("value", None)
@@ -567,12 +568,32 @@ class IpamConnection(IpamAPI):
     def __init__(self, config):
         self._config = config
         self._token = None
+        self._session = requests.Session()
+        self._log_requests = config.get("log_requests", False)
+        if self._log_requests:
+
+            def logging_hook(response, *args, **kwargs):
+                print(f"\n>{response.request.method}> {response.url}")
+                try:
+                    _json = json.loads(response.text)
+                    # pretty print JSON
+                    if isinstance(_json, dict) or isinstance(_json, list):
+                        print(f"<{response.status_code}< [JSON object]")
+                        print(json.dumps(_json, indent=2))
+                        print(f"<{response.status_code}< [END:JSON object]")
+                    else:
+                        print(f"<{response.status_code}< {response.text}")
+                except ValueError:
+                    print(f"<{response.status_code}< {response.text}")
+                    print()
+
+            self._session.hooks["response"] = [logging_hook]
         self._login()
 
     def _get(self, path, *args, **kwargs):
         debug = kwargs.get("debug", False)
         uri = "{}/{}".format(self._config["endpoint"], path)
-        response = requests.get(uri, *args, **kwargs)
+        response = self._session.get(uri, *args, **kwargs)
         if debug:
             print("Response for {} with {!r}".format(path, kwargs.get("params", {})))
             print("Req-Headers: {!r}".format(kwargs.get("headers")))
@@ -584,7 +605,7 @@ class IpamConnection(IpamAPI):
     def _post(self, path, *args, **kwargs):
         debug = kwargs.get("debug", False)
         uri = "{}/{}".format(self._config["endpoint"], path)
-        response = requests.post(uri, *args, **kwargs)
+        response = self._session.post(uri, *args, **kwargs)
         if debug:
             print("Response for {} with {!r}".format(path, kwargs.get("params", {})))
             print("POST Body: {!r}".format(kwargs.get("data", {})))
@@ -597,7 +618,7 @@ class IpamConnection(IpamAPI):
     def _put(self, path, *args, **kwargs):
         debug = kwargs.get("debug", False)
         uri = "{}/{}".format(self._config["endpoint"], path)
-        response = requests.put(uri, *args, **kwargs)
+        response = self._session.put(uri, *args, **kwargs)
         if debug:
             print("Response for {} with {!r}".format(path, kwargs.get("params", {})))
             print("POST Body: {!r}".format(kwargs.get("data", {})))
@@ -610,7 +631,7 @@ class IpamConnection(IpamAPI):
     def _delete(self, path, *args, **kwargs):
         debug = kwargs.get("debug", False)
         uri = "{}/{}".format(self._config["endpoint"], path)
-        response = requests.delete(uri, *args, **kwargs)
+        response = self._session.delete(uri, *args, **kwargs)
         if debug:
             print("Response for {} with {!r}".format(path, kwargs.get("params", {})))
             print("POST Body: {!r}".format(kwargs.get("data", {})))
@@ -673,11 +694,18 @@ class IpamConnection(IpamAPI):
             self._get_rest("logout")
         finally:
             self._token = None
+        if self._session:
+            self._session.close()
+        self._session = None
 
     def _login(self):
         if self._token:
-            self._get_rest("logout")
-        self._token = None
+            self._logout()
+        if not self._session:
+            self._session = requests.Session()
+        _resp_hooks = self._session.hooks["response"]
+        if self._log_requests:
+            self._session.hooks["response"] = None
         login_response = self._get_rest(
             "login",
             params={
@@ -695,6 +723,8 @@ class IpamConnection(IpamAPI):
             # print("Login got token: {!r}".format(self._token))
         else:
             raise SystemExit("Login failed")
+        if self._log_requests:
+            self._session.hooks["response"] = _resp_hooks
 
     def raw_get_json(self, path, *args, **kwargs):
         response = self._get_rest(path, *args, **kwargs)

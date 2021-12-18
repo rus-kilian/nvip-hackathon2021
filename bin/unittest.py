@@ -191,7 +191,7 @@ try:
             abort("VM %s has no snapshots!" % dns_hm)
         revert_to_snapshot(v.si, v.vms[dns_hm], snapshots[0])
 
-        v.update_ipam_config("admin", config["bam_password"])
+        v.update_ipam_config("admin", config["bam_password"], True)
 
         # we now have a Configuration and a View
         v.bootstrap_ipam_config()

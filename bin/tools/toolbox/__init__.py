@@ -288,7 +288,9 @@ class VMPreparer:
     def get_current_snapshot(self):
         return self.snapshot_restored
 
-    def update_ipam_config(self, username=None, password=None):  # nosec: B107
+    def update_ipam_config(
+        self, username=None, password=None, log_requests=False
+    ):  # nosec: B107
         print(
             clear_line() + "\rRefreshing connection credentials to %s" % self.name,
             end="",
@@ -305,6 +307,7 @@ class VMPreparer:
                 password = self.ipam_config["password"]
         self.ipam_config["username"] = username
         self.ipam_config["password"] = password
+        self.ipam_config["log_requests"] = log_requests
         print(clear_line() + "\r", end="")
 
     def tailf(self, vmu, running):
@@ -644,7 +647,8 @@ class VMPreparer:
         if self.connection:
             # greenprint("Connection to %s established" % self.name)
             return
-        self.update_ipam_config()
+        if not self.ipam_config:
+            self.update_ipam_config()
         print("Ensuring connection to https://%s/" % self.name, end="")
         _try = 1
         while _try < retries:
