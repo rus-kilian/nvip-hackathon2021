@@ -979,7 +979,10 @@ class VMPreparer:
                     if "view" in r["properties"]:
                         _properties["view"] = r["properties"]["view"]
                     self.connection.add_dns_deployment_role(
-                        r["entityId"], _properties, _iface, r["type"]
+                        r["entityId"],
+                        _iface,
+                        r["type"],
+                        _properties,
                     )
                 greenprint(
                     clear_line()
