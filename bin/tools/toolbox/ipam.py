@@ -526,12 +526,30 @@ class IpamAPI:
             )
         ]
 
-    def get_deployment_role(self, entityId, **kwargs):
+    def get_deployment_roles(self, entityId, **kwargs):
         return [
             decode_properties(r)
             for r in (
                 self.raw_get_json(
                     "getDeploymentRoles", params={"entityId": entityId}, **kwargs
+                )
+            )
+        ]
+
+    def get_deployment_options(self, entityId, optionTypes="", serverId=0, **kwargs):
+        if isinstance(optionTypes, list):
+            optionTypes = "|".join(optionTypes)
+        return [
+            decode_properties(r)
+            for r in (
+                self.raw_get_json(
+                    "getDeploymentOptions",
+                    params={
+                        "entityId": entityId,
+                        "optionTypes": optionTypes,
+                        "serverId": serverId,
+                    },
+                    **kwargs,
                 )
             )
         ]
@@ -874,7 +892,9 @@ class IpamGenericCache:
             return self._generic_cache_dns_options[name][serverId]["default"]
         # no cache hit - actually fetch DNS options
         for s in servers:
-            _res = self._conn.get_dns_option(entityId, name, s)
+            _res = self._conn.get_deployment_options(entityId, "DNSOption", s).get(
+                name, None
+            )
             if _res is not None:
                 if debug:
                     print(
@@ -891,7 +911,9 @@ class IpamGenericCache:
                 % (name, int(serverId)),
                 _res,
             )
-        _res = self._conn.get_dns_option(serverId, name, serverId)
+        _res = self._conn.get_deployment_options(serverId, "DNSOption", serverId).get(
+            name, None
+        )
         self._generic_cache_dns_options[name][serverId]["default"] = _res
         return _res
 
@@ -1131,9 +1153,12 @@ class IpamUS(IpamGenericCache, IpamAPI):
         self,
         entityId,
     ):
-        return self._conn.get_deployment_role(
+        return self._conn.get_deployment_roles(
             entityId,
         )
+
+    def get_deployment_options(self, entityId, optionTypes="", serverId=0):
+        return self._conn.get_deployment_options(entityId, optionTypes, serverId)
 
     def add_dns_deployment_option(
         self, entityId, name, value, properties=None, server=None, serverGroup=None

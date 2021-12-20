@@ -126,12 +126,18 @@ def get_children(conn, servers, entityId, type=None):
         # init target zones list per server
         _result[t] = {}
         # get zone options
-        for opt in OPTIONS:
-            # next, let's get all the current entity DNS options
-            _res = conn.get_dns_option(entityId, opt, servers[t])
-            if _res:
-                result[t][opt] = _res
-                continue
+        _res = conn.get_deployment_options(entityId, "DNSOption", servers[t])
+        if _res:
+            for opt in OPTIONS:
+                # next, let's get all the current entity DNS options
+                _res_opt = list(
+                    map(
+                        lambda x: x["value"], filter((lambda x: x["name"] == opt), _res)
+                    )
+                )
+                if _res_opt:
+                    result[t][opt] = _res_opt
+                    continue
     res = conn.get_entities(entityId, type)
     if not res:
         # overrides = None
@@ -316,16 +322,40 @@ try:
             print(value)
 
         def print_dns_options(parent, level):
+            _dns_hm_opt = v.connection._conn.get_deployment_options(
+                parent, "DNSOption", dns_hm_id
+            )
+            _dummy_opt = v.connection._conn.get_deployment_options(
+                parent, "DNSOption", dummy_id
+            )
+            _all_opt = v.connection._conn.get_deployment_options(
+                parent, "DNSOption", dummy_id
+            )
             for opt in ["allow-xfer", "allow-notify"]:
-                _srvopt = v.connection._conn.get_dns_option(parent, opt, dns_hm_id)
+                _srvopt = list(
+                    map(
+                        lambda x: x["value"],
+                        filter((lambda x: x["name"] == opt), _dns_hm_opt),
+                    )
+                )
                 if _srvopt:
-                    listprint(level + 1, opt + " (%s)" % dns_hm, str(_srvopt))
-                _srvopt = v.connection._conn.get_dns_option(parent, opt, dummy_id)
+                    listprint(level + 1, opt + " (%s)" % dns_hm, ",".join(_srvopt))
+                _srvopt = list(
+                    map(
+                        lambda x: x["value"],
+                        filter((lambda x: x["name"] == opt), _dummy_opt),
+                    )
+                )
                 if _srvopt:
-                    listprint(level + 1, opt + " (dummy)", str(_srvopt))
-                _srvopt = v.connection._conn.get_dns_option(parent, opt, 0)
+                    listprint(level + 1, opt + " (dummy)", ",".join(_srvopt))
+                _srvopt = list(
+                    map(
+                        lambda x: x["value"],
+                        filter((lambda x: x["name"] == opt), _all_opt),
+                    )
+                )
                 if _srvopt:
-                    listprint(level + 1, opt + " (all Servers)", str(_srvopt))
+                    listprint(level + 1, opt + " (all Servers)", ",".join(_srvopt))
 
         def print_dns_roles(parent, level):
             _roles = v.connection.get_deployment_roles(parent)
@@ -401,10 +431,19 @@ try:
             for srv in servers:
                 srvid = servers[srv]["id"]
                 listprint(2, value=srv, objid=int(srvid))
-                for opt in ["allow-xfer", "allow-notify"]:
-                    _srvopt = v.connection.get_dns_option(srvid, opt, srvid)
-                    if _srvopt:
-                        listprint(3, opt, str(_srvopt))
+                _srvopts = v.connection.get_deployment_options(
+                    srvid, "DNSOption", srvid
+                )
+                if _srvopts:
+                    for opt in ["allow-xfer", "allow-notify"]:
+                        _srvopt = list(
+                            map(
+                                lambda x: x["value"],
+                                filter((lambda x: x["name"] == opt), _srvopts),
+                            )
+                        )
+                        if _srvopt:
+                            listprint(3, opt, ",".join(_srvopt))
                 roles = v.connection.get_server_roles(srvid)
                 if roles:
                     listprint(3, "Roles")
@@ -449,21 +488,45 @@ try:
             v.connection.clear_cache()
             v.set_log_requests(True)
 
-            res = str(v.connection.get_dns_option(_z3, "allow-notify", dns_hm_id))
+            res = v.connection.get_deployment_options(_z3, "DNSOption", dns_hm_id)
+            res = ",".join(
+                list(
+                    map(
+                        lambda x: x["value"],
+                        filter((lambda x: x["name"] == "allow-notify"), res),
+                    )
+                )
+            )
             result(
                 (res == ip),
                 "Current DNS options at '%s'" % blue("dnssec.lab.bluecat"),
                 res,
             )
 
-            res = str(v.connection.get_dns_option(_n1, "allow-notify", dns_hm_id))
+            res = v.connection.get_deployment_options(_n1, "DNSOption", dns_hm_id)
+            res = ",".join(
+                list(
+                    map(
+                        lambda x: x["value"],
+                        filter((lambda x: x["name"] == "allow-notify"), res),
+                    )
+                )
+            )
             result(
                 (res == ip),
                 "Current DNS options at '%s'" % blue("10.0.0.0/24"),
                 res,
             )
 
-            res = str(v.connection.get_dns_option(_v6_n1, "allow-notify", dns_hm_id))
+            res = v.connection.get_deployment_options(_v6_n1, "DNSOption", dns_hm_id)
+            res = ",".join(
+                list(
+                    map(
+                        lambda x: x["value"],
+                        filter((lambda x: x["name"] == "allow-notify"), res),
+                    )
+                )
+            )
             result(
                 (res == ip),
                 "Current DNS options at '%s'" % blue("2001:db8:0:1::/64"),
@@ -483,9 +546,11 @@ try:
                 substage("Adding %s DNS option (all servers)" % level)
             else:
                 substage("Adding %s DNS option (this server only)" % level)
+            v.set_log_requests(True)
             v.connection.add_dns_deployment_option(
                 entityid, "allow-notify", _ip, server=srv
             )
+            v.set_log_requests(False)
             verify_current_dns_options(_ip, zone, v4, v6)
             voidip += 1
 
