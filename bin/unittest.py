@@ -127,6 +127,8 @@ def get_children(conn, servers, entityId, type=None):
         _result[t] = {}
         # get zone options
         _res = conn.get_deployment_options(entityId, "DNSOption", servers[t])
+        if not _res:
+            _res = conn.get_deployment_options(entityId, "DNSOption", 0)
         if _res:
             for opt in OPTIONS:
                 # next, let's get all the current entity DNS options
@@ -328,9 +330,7 @@ try:
             _dummy_opt = v.connection._conn.get_deployment_options(
                 parent, "DNSOption", dummy_id
             )
-            _all_opt = v.connection._conn.get_deployment_options(
-                parent, "DNSOption", dummy_id
-            )
+            _all_opt = v.connection._conn.get_deployment_options(parent, "DNSOption", 0)
             for opt in ["allow-xfer", "allow-notify"]:
                 _srvopt = list(
                     map(
@@ -434,6 +434,10 @@ try:
                 _srvopts = v.connection.get_deployment_options(
                     srvid, "DNSOption", srvid
                 )
+                if not _srvopts:
+                    _srvopts = v.connection.get_deployment_options(
+                        srvid, "DNSOption", 0
+                    )
                 if _srvopts:
                     for opt in ["allow-xfer", "allow-notify"]:
                         _srvopt = list(
@@ -483,55 +487,55 @@ try:
 
         stage("Adding deployment options to zones and comparing results")
 
-        def verify_current_dns_options(ip, zone=True, v4=True, v6=True):
+        def get_dns_option(entityid, opt="allow-notify", srv=None):
+            if not srv:
+                srv = 0
+            res = v.connection.get_deployment_options(entityid, "DNSOption", srv)
+            if not res:
+                return "None"
+            _opts = opt
+            if isinstance(opt, str):
+                _opts = [opt]
+            res = ",".join(
+                list(
+                    map(
+                        lambda x: x["value"],
+                        filter((lambda x: x["name"] in _opts), res),
+                    )
+                )
+            )
+            if not res:
+                return "None"
+            return res
+
+        def verify_current_dns_options(ip, zone=True, v4=True, v6=True, srv=None):
             yellowprint(ip, prefix="Expecting: ")
             v.connection.clear_cache()
             v.set_log_requests(True)
 
-            res = v.connection.get_deployment_options(_z3, "DNSOption", dns_hm_id)
-            res = ",".join(
-                list(
-                    map(
-                        lambda x: x["value"],
-                        filter((lambda x: x["name"] == "allow-notify"), res),
-                    )
+            if zone:
+                res = get_dns_option(_z3, "allow-notify", srv)
+                result(
+                    (res == ip),
+                    "Current DNS options at '%s'" % blue("dnssec.lab.bluecat"),
+                    res,
                 )
-            )
-            result(
-                (res == ip),
-                "Current DNS options at '%s'" % blue("dnssec.lab.bluecat"),
-                res,
-            )
 
-            res = v.connection.get_deployment_options(_n1, "DNSOption", dns_hm_id)
-            res = ",".join(
-                list(
-                    map(
-                        lambda x: x["value"],
-                        filter((lambda x: x["name"] == "allow-notify"), res),
-                    )
+            if v4:
+                res = get_dns_option(_n1, "allow-notify", srv)
+                result(
+                    (res == ip),
+                    "Current DNS options at '%s'" % blue("10.0.0.0/24"),
+                    res,
                 )
-            )
-            result(
-                (res == ip),
-                "Current DNS options at '%s'" % blue("10.0.0.0/24"),
-                res,
-            )
 
-            res = v.connection.get_deployment_options(_v6_n1, "DNSOption", dns_hm_id)
-            res = ",".join(
-                list(
-                    map(
-                        lambda x: x["value"],
-                        filter((lambda x: x["name"] == "allow-notify"), res),
-                    )
+            if v6:
+                res = get_dns_option(_v6_n1, "allow-notify", srv)
+                result(
+                    (res == ip),
+                    "Current DNS options at '%s'" % blue("2001:db8:0:1::/64"),
+                    res,
                 )
-            )
-            result(
-                (res == ip),
-                "Current DNS options at '%s'" % blue("2001:db8:0:1::/64"),
-                res,
-            )
             v.set_log_requests(False)
 
         substage("Starting baseline")
@@ -547,11 +551,14 @@ try:
             else:
                 substage("Adding %s DNS option (this server only)" % level)
             v.set_log_requests(True)
-            v.connection.add_dns_deployment_option(
-                entityid, "allow-notify", _ip, server=srv
-            )
+            if entityid == srv:
+                v.connection.add_dns_deployment_option(entityid, "allow-notify", _ip)
+            else:
+                v.connection.add_dns_deployment_option(
+                    entityid, "allow-notify", _ip, server=srv
+                )
             v.set_log_requests(False)
-            verify_current_dns_options(_ip, zone, v4, v6)
+            verify_current_dns_options(_ip, zone, v4, v6, srv)
             voidip += 1
 
         update_dns_option("Configuration level", v.connection._configuration_id)
@@ -559,11 +566,11 @@ try:
             "Configuration level", v.connection._configuration_id, srv=dns_hm_id
         )
 
-        update_dns_option("Server level: %s" % dns_hm, dns_hm_id)
-        update_dns_option("Server level: dummy", dummy_id)
+        update_dns_option("Server level: %s" % dns_hm, dns_hm_id, srv=dns_hm_id)
+        # update_dns_option("Server level: dummy", dummy_id)
 
-        update_dns_option("View level", viewid)
-        update_dns_option("View level", viewid, srv=dns_hm_id)
+        update_dns_option("View level", viewid, v4=False, v6=False)
+        update_dns_option("View level", viewid, v4=False, v6=False, srv=dns_hm_id)
 
         update_dns_option("'bluecat' zone", _z1, v4=False, v6=False)
         update_dns_option("'bluecat' zone", _z1, srv=dns_hm_id, v4=False, v6=False)
