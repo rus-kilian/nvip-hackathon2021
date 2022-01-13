@@ -331,6 +331,9 @@ try:
                 parent, "DNSOption", dummy_id
             )
             _all_opt = v.connection._conn.get_deployment_options(parent, "DNSOption", 0)
+            _any_opt = v.connection._conn.get_deployment_options(
+                parent, "DNSOption", -1
+            )
             for opt in ["allow-xfer", "allow-notify"]:
                 _srvopt = list(
                     map(
@@ -356,6 +359,14 @@ try:
                 )
                 if _srvopt:
                     listprint(level + 1, opt + " (all Servers)", ",".join(_srvopt))
+                _srvopt = list(
+                    map(
+                        lambda x: x["value"],
+                        filter((lambda x: x["name"] == opt), _any_opt),
+                    )
+                )
+                if _srvopt:
+                    listprint(level + 1, opt + " (any Servers)", ",".join(_srvopt))
 
         def print_dns_roles(parent, level):
             _roles = v.connection.get_deployment_roles(parent)
@@ -436,7 +447,7 @@ try:
                 )
                 if not _srvopts:
                     _srvopts = v.connection.get_deployment_options(
-                        srvid, "DNSOption", 0
+                        srvid, "DNSOption", -1
                     )
                 if _srvopts:
                     for opt in ["allow-xfer", "allow-notify"]:
@@ -561,6 +572,7 @@ try:
             verify_current_dns_options(_ip, zone, v4, v6, srv)
             voidip += 1
 
+        substage("Adding 'all-server' overrides to tree elements")
         update_dns_option("Configuration level", v.connection._configuration_id)
         update_dns_option(
             "Configuration level", v.connection._configuration_id, srv=dns_hm_id
@@ -570,21 +582,24 @@ try:
         # update_dns_option("Server level: dummy", dummy_id)
 
         update_dns_option("View level", viewid, v4=False, v6=False)
-        update_dns_option("View level", viewid, v4=False, v6=False, srv=dns_hm_id)
 
         update_dns_option("'bluecat' zone", _z1, v4=False, v6=False)
-        update_dns_option("'bluecat' zone", _z1, srv=dns_hm_id, v4=False, v6=False)
         update_dns_option("'lab.bluecat' zone", _z2, v4=False, v6=False)
-        update_dns_option("'lab.bluecat' zone", _z2, srv=dns_hm_id, v4=False, v6=False)
 
         update_dns_option("IPv4 block level", _b1, zone=False, v6=False)
-        update_dns_option("IPv4 block level", _b1, srv=dns_hm_id, zone=False, v6=False)
 
         update_dns_option("IPv6 GUA root level", _v6_root, zone=False, v4=False)
+        update_dns_option("IPv6 block level", _v6_b1, zone=False, v4=False)
+        print_tree()
+        substage("Adding per-server overrides for " + dns_hm)
+
+        update_dns_option("View level", viewid, v4=False, v6=False, srv=dns_hm_id)
+        update_dns_option("'bluecat' zone", _z1, srv=dns_hm_id, v4=False, v6=False)
+        update_dns_option("'lab.bluecat' zone", _z2, srv=dns_hm_id, v4=False, v6=False)
+        update_dns_option("IPv4 block level", _b1, srv=dns_hm_id, zone=False, v6=False)
         update_dns_option(
             "IPv6 GUA root level", _v6_root, srv=dns_hm_id, zone=False, v4=False
         )
-        update_dns_option("IPv6 block level", _v6_b1, zone=False, v4=False)
         update_dns_option(
             "IPv6 block level", _v6_b1, srv=dns_hm_id, zone=False, v4=False
         )
